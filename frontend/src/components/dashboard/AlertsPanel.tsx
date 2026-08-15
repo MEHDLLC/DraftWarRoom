@@ -5,34 +5,40 @@ interface AlertsPanelProps {
 }
 
 const typeConfig: Record<
-  AppNotification["type"],
+  string,
   { color: string; bgColor: string; icon: string }
 > = {
-  injury: {
+  INJURY: {
     color: "text-danger-400",
     bgColor: "bg-danger-400/10 border-danger-400/30",
     icon: "M12 9v2m0 4h.01M5.07 19h13.86c1.54 0 2.5-1.67 1.73-3L13.73 4c-.77-1.33-2.69-1.33-3.46 0L3.34 16c-.77 1.33.19 3 1.73 3z",
   },
-  waiver: {
+  WAIVER_TIP: {
     color: "text-success-400",
     bgColor: "bg-success-400/10 border-success-400/30",
     icon: "M12 4v16m8-8H4",
   },
-  lineup: {
+  LINEUP_ALERT: {
     color: "text-accent-400",
     bgColor: "bg-accent-400/10 border-accent-400/30",
     icon: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2",
   },
-  trade: {
+  TRADE_SUGGESTION: {
     color: "text-primary-300",
     bgColor: "bg-primary-400/10 border-primary-400/30",
     icon: "M8 7h12m-12 6h12m-12 6h12M4 7h.01M4 13h.01M4 19h.01",
   },
-  general: {
+  RECAP: {
     color: "text-surface-400",
     bgColor: "bg-surface-400/10 border-surface-400/30",
     icon: "M13 16h-1v-4h-1m1-4h.01M12 2a10 10 0 100 20 10 10 0 000-20z",
   },
+};
+
+const defaultConfig = {
+  color: "text-surface-400",
+  bgColor: "bg-surface-400/10 border-surface-400/30",
+  icon: "M13 16h-1v-4h-1m1-4h.01M12 2a10 10 0 100 20 10 10 0 000-20z",
 };
 
 function formatTimestamp(timestamp: string): string {
@@ -83,13 +89,13 @@ export default function AlertsPanel({ alerts }: AlertsPanelProps) {
           Alerts
         </h2>
         <span className="rounded-full bg-danger-400/20 px-2 py-0.5 text-xs font-medium text-danger-400">
-          {alerts.filter((a) => !a.read).length} new
+          {alerts.filter((a) => !a.is_read).length} new
         </span>
       </div>
 
       <div className="space-y-2">
         {alerts.map((alert) => {
-          const config = typeConfig[alert.type];
+          const config = typeConfig[alert.type] || defaultConfig;
 
           return (
             <div
@@ -97,7 +103,7 @@ export default function AlertsPanel({ alerts }: AlertsPanelProps) {
               className={[
                 "flex gap-3 rounded-lg border p-3 transition-colors",
                 config.bgColor,
-                alert.read ? "opacity-60" : "",
+                alert.is_read ? "opacity-60" : "",
               ].join(" ")}
             >
               <div className="flex-shrink-0 pt-0.5">
@@ -118,10 +124,10 @@ export default function AlertsPanel({ alerts }: AlertsPanelProps) {
                   {alert.title}
                 </p>
                 <p className="mt-0.5 text-xs text-surface-400">
-                  {alert.message}
+                  {alert.body}
                 </p>
                 <p className="mt-1 text-xs text-surface-600">
-                  {formatTimestamp(alert.timestamp)}
+                  {formatTimestamp(alert.created_at)}
                 </p>
               </div>
             </div>

@@ -244,7 +244,7 @@ export const scheduleApi = {
 
 export const chatApi = {
   sendMessage: (message: string, callbacks: StreamCallbacks, signal?: AbortSignal) =>
-    fetchStream("/chat", { message }, callbacks, signal),
+    fetchStream("/chat/message", { message }, callbacks, signal),
 
   getHistory: () => fetchApi<ChatMessage[]>("/chat/history"),
 };
@@ -257,10 +257,10 @@ export const notificationApi = {
   getAll: () => fetchApi<AppNotification[]>("/notifications"),
 
   markRead: (id: string) =>
-    fetchApi<void>(`/notifications/${id}/read`, { method: "PUT" }),
+    fetchApi<void>(`/notifications/${id}/read`, { method: "POST" }),
 
   getUnreadCount: () =>
-    fetchApi<{ count: number }>("/notifications/unread-count"),
+    fetchApi<{ unread_count: number }>("/notifications/unread-count"),
 };
 
 // ---------------------------------------------------------------------------
@@ -271,6 +271,12 @@ export const draftApi = {
   getPicks: () => fetchApi<DraftPick[]>("/draft/picks"),
 
   getValueTracker: () => fetchApi<DraftValueTracker>("/draft/value-tracker"),
+
+  getBoard: () => fetchApi<DraftBoard>("/draft/board"),
+
+  getSuggestions: () => fetchApi<DraftSuggestions>("/draft/suggestions"),
+
+  refresh: () => fetchApi<DraftRefreshResult>("/draft/refresh", { method: "POST" }),
 };
 
 // ---------------------------------------------------------------------------
@@ -475,12 +481,13 @@ export interface ChatMessage {
 }
 
 export interface AppNotification {
-  id: string;
-  type: "injury" | "trade" | "waiver" | "lineup" | "general";
+  id: number;
+  type: string;
   title: string;
-  message: string;
-  read: boolean;
-  timestamp: string;
+  body: string;
+  priority: string;
+  is_read: boolean;
+  created_at: string;
 }
 
 export interface DraftPick {
@@ -502,4 +509,69 @@ export interface DraftPickValue {
   adp: number;
   pickNumber: number;
   value: number; // positive = good value, negative = reach
+}
+
+export interface DraftBoardTeam {
+  id: number;
+  espn_team_id: number;
+  team_name: string;
+  owner_name: string;
+  is_user_team: boolean;
+  draft_position: number | null;
+}
+
+export interface DraftBoardPick {
+  round: number;
+  pick_number: number;
+  overall_pick: number;
+  player_name: string;
+  position: string;
+  nfl_team: string;
+  projected_points: number;
+  espn_team_id: number;
+  team_name: string;
+  is_user_team: boolean;
+}
+
+export interface DraftBoard {
+  num_teams: number;
+  total_rounds: number;
+  picks_made: number;
+  expected_total: number;
+  is_active: boolean;
+  is_complete: boolean;
+  current_pick: number | null;
+  current_team_espn_id: number | null;
+  is_user_turn: boolean;
+  user_next_pick: number | null;
+  user_draft_position: number | null;
+  teams: DraftBoardTeam[];
+  picks: DraftBoardPick[];
+}
+
+export interface DraftSuggestion {
+  id: number;
+  full_name: string;
+  position: string;
+  nfl_team: string;
+  projected_points: number;
+  headshot_url: string | null;
+  need_score: number;
+  pick_score: number;
+  reason: string;
+}
+
+export interface DraftSuggestions {
+  suggestions: DraftSuggestion[];
+  picks_made: number;
+  total_roster: number;
+  position_counts: Record<string, number>;
+  message?: string;
+}
+
+export interface DraftRefreshResult {
+  status: string;
+  new_picks: number;
+  total_picks: number;
+  free_agents_loaded: number;
 }

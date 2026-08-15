@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useLeague } from "@/context/LeagueContext";
 import { useExplainMode } from "@/context/ExplainModeContext";
+import { useNotifications, useUnreadCount, useMarkRead } from "@/hooks/useNotifications";
 
 function BellIcon({ className }: { className?: string }) {
   return (
@@ -39,10 +40,46 @@ function SyncIcon({ className, spinning }: { className?: string; spinning?: bool
   );
 }
 
+const priorityColors: Record<string, string> = {
+  urgent: "border-l-danger-400",
+  high: "border-l-warning-400",
+  normal: "border-l-primary-400",
+  low: "border-l-surface-600",
+};
+
+const typeIcons: Record<string, string> = {
+  LINEUP_ALERT: "Starting",
+  WAIVER_TIP: "Waiver",
+  INJURY: "Injury",
+  RECAP: "Recap",
+  TRADE_SUGGESTION: "Trade",
+};
+
 export default function Header() {
   const { league, isLoading: leagueLoading } = useLeague();
   const { explainMode, toggleExplainMode } = useExplainMode();
   const [syncing, setSyncing] = useState(false);
+  const [notifOpen, setNotifOpen] = useState(false);
+  const notifRef = useRef<HTMLDivElement>(null);
+
+  const { data: unreadData } = useUnreadCount();
+  const { data: notifications } = useNotifications();
+  const markRead = useMarkRead();
+
+  const unreadCount = unreadData?.unread_count ?? 0;
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (notifRef.current && !notifRef.current.contains(e.target as Node)) {
+        setNotifOpen(false);
+      }
+    }
+    if (notifOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+      return () => document.removeEventListener("mousedown", handleClickOutside);
+    }
+  }, [notifOpen]);
 
   const handleSync = async () => {
     if (syncing) return;
@@ -55,6 +92,10 @@ export default function Header() {
     } finally {
       setSyncing(false);
     }
+  };
+
+  const handleMarkRead = (id: number) => {
+    markRead.mutate(String(id));
   };
 
   return (
@@ -122,15 +163,87 @@ export default function Header() {
         </button>
 
         {/* Notification bell */}
-        <button
-          className="btn-ghost relative p-2"
-          title="Notifications"
-          aria-label="Notifications"
-        >
-          <BellIcon className="h-5 w-5" />
-          {/* Unread indicator dot */}
-          <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-danger-400" />
-        </button>
+        <div className="relative" ref={notifRef}>
+          <button
+            onClick={() => setNotifOpen(!notifOpen)}
+            className="btn-ghost relative p-2"
+            title="Notifications"
+            aria-label="Notifications"
+          >
+            <BellIcon className="h-5 w-5" />
+            {unreadCount > 0 && (
+              <span className="absolute right-1 top-1 flex h-4 w-4 items-center justify-center rounded-full bg-danger-400 text-[10px] font-bold text-white">
+                {unreadCount > 9 ? "9+" : unreadCount}
+              </span>
+            )}
+          </button>
+
+          {/* Notification dropdown */}
+          {notifOpen && (
+            <div className="absolute right-0 top-full z-50 mt-1 w-80 max-h-96 overflow-y-auto rounded-xl border border-surface-700 bg-surface-800 shadow-2xl">
+              <div className="flex items-center justify-between border-b border-surface-700 px-4 py-3">
+                <h3 className="text-sm font-semibold text-surface-100">
+                  Notifications
+                </h3>
+                {unreadCount > 0 && (
+                  <span className="rounded-full bg-danger-400/20 px-2 py-0.5 text-xs font-medium text-danger-300">
+                    {unreadCount} unread
+                  </span>
+                )}
+              </div>
+
+              {!notifications || notifications.length === 0 ? (
+                <div className="px-4 py-8 text-center">
+                  <BellIcon className="mx-auto h-8 w-8 text-surface-600" />
+                  <p className="mt-2 text-sm text-surface-500">
+                    No notifications yet
+                  </p>
+                  <p className="mt-1 text-xs text-surface-600">
+                    You'll see alerts about injuries, waivers, and lineup tips here.
+                  </p>
+                </div>
+              ) : (
+                <div className="divide-y divide-surface-700/50">
+                  {notifications.map((n) => (
+                    <button
+                      key={n.id}
+                      onClick={() => {
+                        if (!n.is_read) handleMarkRead(Number(n.id));
+                      }}
+                      className={[
+                        "w-full border-l-2 px-4 py-3 text-left transition-colors hover:bg-surface-700/30",
+                        priorityColors[n.priority] || priorityColors.normal,
+                        n.is_read ? "opacity-60" : "",
+                      ].join(" ")}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="rounded bg-surface-700 px-1.5 py-0.5 text-[10px] font-medium text-surface-400">
+                              {typeIcons[n.type] || n.type}
+                            </span>
+                            {!n.is_read && (
+                              <span className="h-1.5 w-1.5 rounded-full bg-accent-400" />
+                            )}
+                          </div>
+                          <p className="mt-1 text-sm font-medium text-surface-200 truncate">
+                            {n.title}
+                          </p>
+                          <p className="mt-0.5 text-xs text-surface-400 line-clamp-2">
+                            {n.body}
+                          </p>
+                        </div>
+                      </div>
+                      <p className="mt-1 text-[10px] text-surface-600">
+                        {n.created_at}
+                      </p>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </header>
   );

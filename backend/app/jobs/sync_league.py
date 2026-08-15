@@ -165,12 +165,26 @@ async def sync_league_data():
         try:
             draft_picks = get_draft_results(league)
             for pick in draft_picks:
-                # Find player and team IDs
-                cursor = await db.execute("SELECT id FROM player WHERE espn_id = ?", (pick["espn_player_id"],))
+                espn_player_id = pick.get("espn_player_id")
+                espn_team_id = pick.get("team_id")  # adapter uses "team_id" key
+                if not espn_player_id or not espn_team_id:
+                    continue
+
+                # Ensure player exists
+                cursor = await db.execute("SELECT id FROM player WHERE espn_id = ?", (espn_player_id,))
                 p_row = await cursor.fetchone()
+                if not p_row:
+                    # Insert player stub from draft data
+                    await db.execute("""
+                        INSERT OR IGNORE INTO player (espn_id, full_name, position, nfl_team)
+                        VALUES (?, ?, ?, ?)
+                    """, (espn_player_id, pick.get("player_name", "Unknown"), "??", None))
+                    cursor = await db.execute("SELECT id FROM player WHERE espn_id = ?", (espn_player_id,))
+                    p_row = await cursor.fetchone()
+
                 cursor = await db.execute(
                     "SELECT id FROM team WHERE espn_team_id = ? AND league_id = ?",
-                    (pick["espn_team_id"], league_id)
+                    (espn_team_id, league_id)
                 )
                 t_row = await cursor.fetchone()
 
