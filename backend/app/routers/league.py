@@ -16,6 +16,22 @@ async def trigger_sync():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/set-user-team/{team_id}")
+async def set_user_team(team_id: int):
+    """Mark a team as the user's team."""
+    db = await get_db()
+    try:
+        await db.execute("UPDATE team SET is_user_team = 0")
+        result = await db.execute("UPDATE team SET is_user_team = 1 WHERE id = ?", (team_id,))
+        await db.commit()
+        row = await db.execute_fetchall("SELECT team_name FROM team WHERE id = ?", (team_id,))
+        if not row:
+            raise HTTPException(status_code=404, detail="Team not found")
+        return {"status": "ok", "message": f"User team set to: {row[0]['team_name']}"}
+    finally:
+        await db.close()
+
+
 @router.get("/info", response_model=LeagueInfo)
 async def get_league_info():
     db = await get_db()
