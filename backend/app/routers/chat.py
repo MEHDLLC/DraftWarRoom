@@ -106,19 +106,19 @@ async def send_message(request: ChatRequest):
 
     # Stream response from Claude
     try:
-        import anthropic
+        from anthropic import AsyncAnthropic
 
-        client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+        client = AsyncAnthropic(api_key=settings.anthropic_api_key)
 
         async def generate():
             full_response = ""
-            with client.messages.stream(
+            async with client.messages.stream(
                 model="claude-sonnet-4-20250514",
                 max_tokens=1024,
                 system=system_prompt,
                 messages=messages,
             ) as stream:
-                for text in stream.text_stream:
+                async for text in stream.text_stream:
                     full_response += text
                     yield text
 
