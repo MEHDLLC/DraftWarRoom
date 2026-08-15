@@ -1,7 +1,8 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 from pathlib import Path
 import os
 
@@ -63,7 +64,21 @@ async def health_check():
     return {"status": "ok", "app": "DraftWarRoom"}
 
 
+# Cache control: hashed assets get long cache, index.html never cached
+class CacheControlMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response: Response = await call_next(request)
+        path = request.url.path
+        if path.startswith("/assets/"):
+            # Vite hashed assets — cache forever
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        elif path == "/" or path.endswith(".html"):
+            # HTML — always revalidate to pick up new chunks
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        return response
+
 # Serve React static files in production
 static_dir = Path(__file__).parent.parent.parent / "frontend" / "dist"
 if static_dir.exists():
+    app.add_middleware(CacheControlMiddleware)
     app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
