@@ -113,7 +113,7 @@ async def send_message(request: ChatRequest):
         async def generate():
             full_response = ""
             async with client.messages.stream(
-                model="claude-sonnet-4-20250514",
+                model="claude-sonnet-4-6",
                 max_tokens=1024,
                 system=system_prompt,
                 messages=messages,
