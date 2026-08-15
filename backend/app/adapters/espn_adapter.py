@@ -56,8 +56,7 @@ def get_league_settings(league: League) -> dict[str, Any]:
             "current_week": league.current_week,
             "num_teams": getattr(settings_obj, "team_count", len(league.teams)),
             "scoring_type": _resolve_scoring_type(settings_obj),
-            "playoff_start_week": getattr(settings_obj, "playoff_team_count", None)
-                                  or getattr(settings_obj, "reg_season_count", None),
+            "playoff_start_week": _resolve_playoff_start(settings_obj),
             "roster_slots": _extract_roster_slots(settings_obj),
         }
     except Exception as exc:
@@ -71,6 +70,17 @@ def get_league_settings(league: League) -> dict[str, Any]:
             "playoff_start_week": None,
             "roster_slots": {},
         }
+
+
+def _resolve_playoff_start(settings_obj: Any) -> int:
+    """Best-effort extraction of the playoff start week."""
+    try:
+        reg = getattr(settings_obj, "reg_season_count", None)
+        if reg and isinstance(reg, int):
+            return reg + 1
+    except Exception:
+        pass
+    return 15  # Default NFL playoff week
 
 
 def _resolve_scoring_type(settings_obj: Any) -> str:
@@ -107,7 +117,7 @@ def get_teams(league: League) -> list[dict[str, Any]]:
         for team in league.teams:
             teams.append({
                 "espn_team_id": team.team_id,
-                "owner_name": getattr(team, "owner", None) or getattr(team, "owners", [""])[0] if getattr(team, "owners", None) else "",
+                "owner_name": _resolve_owner(team),
                 "team_name": team.team_name,
                 "abbreviation": getattr(team, "team_abbrev", ""),
                 "wins": getattr(team, "wins", 0),
@@ -120,6 +130,26 @@ def get_teams(league: League) -> list[dict[str, Any]]:
     except Exception as exc:
         logger.error("Failed to fetch teams: %s", exc)
     return teams
+
+
+def _resolve_owner(team: Any) -> str:
+    """Extract a string owner name from the team object."""
+    try:
+        owner = getattr(team, "owner", None)
+        if isinstance(owner, str) and owner:
+            return owner
+        owners = getattr(team, "owners", None)
+        if owners:
+            first = owners[0]
+            if isinstance(first, str):
+                return first
+            if isinstance(first, dict):
+                fn = first.get("firstName", "")
+                ln = first.get("lastName", "")
+                return f"{fn} {ln}".strip() or str(first.get("id", ""))
+        return ""
+    except Exception:
+        return ""
 
 
 def _team_streak(team: Any) -> str:
