@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     secret_key: str = "change-me-in-production"
 
     # NFL season
-    nfl_season: int = 2025
+    nfl_season: int = 2026
 
     _env_path: str = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
     model_config = {
