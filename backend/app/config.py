@@ -22,8 +22,9 @@ class Settings(BaseSettings):
     # NFL season (use most recent completed/active season)
     nfl_season: int = 2024
 
+    _env_path: str = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
     model_config = {
-        "env_file": os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env"),
+        "env_file": _env_path if os.path.exists(os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")) else None,
         "env_file_encoding": "utf-8",
     }
 
