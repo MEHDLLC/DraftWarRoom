@@ -87,6 +87,16 @@ export function useUndoLastPick() {
   });
 }
 
+export function useRemovePick() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (overallPick: number) => draftApi.removePick(overallPick),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["draft"] });
+    },
+  });
+}
+
 export function useSetMyPosition() {
   const queryClient = useQueryClient();
   return useMutation({

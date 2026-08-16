@@ -409,6 +409,92 @@ async def mark_player_picked(body: MarkPickedRequest):
 
 
 # ---------------------------------------------------------------------------
+# Live draft: remove a specific pick (by overall_pick number)
+# ---------------------------------------------------------------------------
+
+@router.delete("/remove-pick/{overall_pick}")
+async def remove_specific_pick(overall_pick: int):
+    """Remove a specific draft pick and shift all subsequent picks down by 1."""
+    db = await get_db()
+    try:
+        league_row = await db.execute_fetchall("SELECT id, num_teams FROM league LIMIT 1")
+        if not league_row:
+            raise HTTPException(status_code=404, detail="League not synced")
+        league_id = league_row[0]["id"]
+        num_teams = league_row[0]["num_teams"]
+
+        # Find the pick to remove
+        pick_row = await db.execute_fetchall("""
+            SELECT dp.id, p.full_name
+            FROM draft_pick dp
+            JOIN player p ON p.id = dp.player_id
+            WHERE dp.league_id = ? AND dp.overall_pick = ?
+        """, (league_id, overall_pick))
+        if not pick_row:
+            raise HTTPException(status_code=404, detail=f"No pick found at overall_pick {overall_pick}")
+
+        removed_player = pick_row[0]["full_name"]
+
+        # Delete the pick
+        await db.execute("DELETE FROM draft_pick WHERE id = ?", (pick_row[0]["id"],))
+
+        # Get all picks that need to shift down (those after the removed pick)
+        later_picks = await db.execute_fetchall("""
+            SELECT dp.id, dp.overall_pick
+            FROM draft_pick dp
+            WHERE dp.league_id = ? AND dp.overall_pick > ?
+            ORDER BY dp.overall_pick ASC
+        """, (league_id, overall_pick))
+
+        # Load draft order for snake recalculation
+        teams_by_pos = {}
+        all_teams = await db.execute_fetchall(
+            "SELECT id, draft_position FROM team WHERE league_id = ? AND draft_position IS NOT NULL",
+            (league_id,)
+        )
+        for t in all_teams:
+            teams_by_pos[t["draft_position"]] = t["id"]
+
+        # Shift each later pick down by 1 and reassign team via snake
+        picks_shifted = 0
+        for row in later_picks:
+            new_overall = row["overall_pick"] - 1
+            new_round = ((new_overall - 1) // num_teams) + 1
+            new_pick_in_round = ((new_overall - 1) % num_teams) + 1
+
+            # Snake draft team assignment
+            pos_in_round = (new_overall - 1) % num_teams
+            if new_round % 2 == 0:
+                pos_in_round = num_teams - 1 - pos_in_round
+            draft_pos = pos_in_round + 1
+            new_team_id = teams_by_pos.get(draft_pos)
+
+            if new_team_id:
+                await db.execute("""
+                    UPDATE draft_pick
+                    SET overall_pick = ?, round = ?, pick_number = ?, team_id = ?
+                    WHERE id = ?
+                """, (new_overall, new_round, new_pick_in_round, new_team_id, row["id"]))
+            else:
+                await db.execute("""
+                    UPDATE draft_pick
+                    SET overall_pick = ?, round = ?, pick_number = ?
+                    WHERE id = ?
+                """, (new_overall, new_round, new_pick_in_round, row["id"]))
+            picks_shifted += 1
+
+        await db.commit()
+
+        return {
+            "status": "ok",
+            "removed_player": removed_player,
+            "picks_shifted": picks_shifted,
+        }
+    finally:
+        await db.close()
+
+
+# ---------------------------------------------------------------------------
 # Live draft: undo last pick
 # ---------------------------------------------------------------------------
 

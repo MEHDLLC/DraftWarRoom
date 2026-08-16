@@ -291,6 +291,12 @@ export const draftApi = {
 
   undoLast: () => fetchApi<{ status: string; undone: string }>("/draft/undo-last", { method: "DELETE" }),
 
+  removePick: (overallPick: number) =>
+    fetchApi<{ status: string; removed_player: string; picks_shifted: number }>(
+      `/draft/remove-pick/${overallPick}`,
+      { method: "DELETE" },
+    ),
+
   setMyPosition: (position: number) =>
     fetchApi<{ status: string; position: number }>("/draft/set-my-position", {
       method: "POST",
