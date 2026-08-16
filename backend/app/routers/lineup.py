@@ -25,7 +25,7 @@ async def get_lineup_recommendations():
         # Try the engine module first
         try:
             from ..engine.lineup_advisor import get_lineup_advice
-            advice = await get_lineup_advice(db, team_id, current_week)
+            advice = await get_lineup_advice(team_id, current_week)
             return advice
         except ImportError:
             pass

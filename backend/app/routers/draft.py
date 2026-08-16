@@ -110,14 +110,15 @@ async def get_draft_picks():
 
 @router.get("/value-tracker")
 async def get_draft_value_tracker():
-    """Analyze draft value: compare each pick's actual performance vs ADP."""
+    """Analyze draft value: compare each pick's actual performance vs ADP.
+    When ADP data is missing, computes a projection-based ADP from player rankings."""
     db = await get_db()
     try:
         rows = await db.execute_fetchall(
             """
             SELECT dp.round, dp.pick_number, dp.overall_pick, dp.adp,
                    p.id AS player_id, p.full_name, p.position, p.nfl_team,
-                   p.composite_score, p.ros_projection,
+                   p.composite_score, p.ros_projection, p.projected_points,
                    t.id AS team_id, t.team_name, t.is_user_team
             FROM draft_pick dp
             JOIN player p ON p.id = dp.player_id
@@ -129,6 +130,20 @@ async def get_draft_value_tracker():
         if not rows:
             return {"picks": [], "summary": {"total_value": 0, "best_pick": None, "worst_pick": None}}
 
+        # Build projection-based ADP: rank all draftable players by projected_points
+        # This gives a "where should this player have been drafted" estimate
+        all_players = await db.execute_fetchall(
+            """
+            SELECT id, projected_points FROM player
+            WHERE position IN ('QB','RB','WR','TE','K','DST','D/ST')
+            AND projected_points > 0
+            ORDER BY projected_points DESC
+            """
+        )
+        proj_adp = {}
+        for rank, p in enumerate(all_players, start=1):
+            proj_adp[p["id"]] = rank
+
         picks = []
         best_pick = None
         worst_pick = None
@@ -136,7 +151,13 @@ async def get_draft_value_tracker():
         user_pick_count = 0
 
         for r in rows:
-            value_diff = round(r["adp"] - r["overall_pick"], 1) if r["adp"] else 0
+            # Use stored ADP if available, otherwise fall back to projection-based rank
+            adp = r["adp"]
+            if not adp:
+                adp = proj_adp.get(r["player_id"])
+
+            value_diff = round(adp - r["overall_pick"], 1) if adp else 0
+
             score = r["composite_score"] or 0
             if score >= 80:
                 grade = "Elite"
@@ -156,7 +177,7 @@ async def get_draft_value_tracker():
                 "overall_pick": r["overall_pick"], "player_name": r["full_name"],
                 "player_id": r["player_id"], "position": r["position"],
                 "nfl_team": r["nfl_team"], "team_name": r["team_name"],
-                "is_user_team": bool(r["is_user_team"]), "adp": r["adp"],
+                "is_user_team": bool(r["is_user_team"]), "adp": adp,
                 "value_diff": value_diff, "composite_score": score,
                 "performance_grade": grade,
             }
