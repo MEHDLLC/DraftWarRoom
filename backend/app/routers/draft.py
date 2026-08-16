@@ -812,8 +812,12 @@ async def refresh_draft_data():
         fa_count = 0
         for pos in ["QB", "RB", "WR", "TE", "K", "D/ST"]:
             try:
-                fas = get_free_agents(league, position=pos, limit=80)
+                fas = get_free_agents(league, position=pos, limit=150)
                 for fa in fas:
+                    proj = fa.get("projected_points", 0)
+                    if fa_count < 5:
+                        logger.info("Sample player: %s (%s) - projected_points=%.1f",
+                                    fa["full_name"], fa["position"], proj)
                     await db.execute("""
                         INSERT INTO player (espn_id, full_name, position, nfl_team, status,
                                             injury_status, projected_points)
@@ -825,7 +829,7 @@ async def refresh_draft_data():
                     """, (
                         fa["espn_id"], fa["full_name"], fa["position"],
                         fa.get("nfl_team"), fa.get("status"),
-                        fa.get("injury_status"), fa.get("projected_points", 0),
+                        fa.get("injury_status"), proj,
                     ))
                 fa_count += len(fas)
             except Exception as e:

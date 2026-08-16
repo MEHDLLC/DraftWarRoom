@@ -181,15 +181,34 @@ def get_rosters(league: League) -> dict[int, list[dict[str, Any]]]:
 
 def _player_to_dict(player: Any) -> dict[str, Any]:
     """Convert an espn_api Player object to a flat dict."""
-    # Projected points for the current scoring period
+    # Season-long projected points (best for draft rankings)
     projected = 0.0
     try:
-        stats = getattr(player, "stats", {}) or {}
-        for period_stats in stats.values():
-            if isinstance(period_stats, dict) and "projected_points" in period_stats:
-                projected = period_stats["projected_points"]
-                break
-        # Fallback to the top-level attribute
+        # 1. Try the season-long total projection attribute (espn_api >= 0.30)
+        projected = getattr(player, "projected_total_points", 0.0) or 0.0
+
+        # 2. Try projected_avg_points * 17 as fallback
+        if projected == 0.0:
+            avg = getattr(player, "projected_avg_points", 0.0) or 0.0
+            if avg > 0:
+                projected = avg * 17
+
+        # 3. Try stats dict — prefer season total (key 0) over weekly
+        if projected == 0.0:
+            stats = getattr(player, "stats", {}) or {}
+            # Key 0 is typically the season-total projection
+            season_stats = stats.get(0)
+            if isinstance(season_stats, dict) and "projected_points" in season_stats:
+                projected = season_stats["projected_points"]
+            else:
+                # Fall back to max projected_points across all periods
+                for period_stats in stats.values():
+                    if isinstance(period_stats, dict) and "projected_points" in period_stats:
+                        val = period_stats["projected_points"]
+                        if val > projected:
+                            projected = val
+
+        # 4. Last resort: top-level attribute
         if projected == 0.0:
             projected = getattr(player, "projected_points", 0.0) or 0.0
     except Exception:
