@@ -296,6 +296,12 @@ export const draftApi = {
       method: "POST",
       body: { position },
     }),
+
+  setDraftOrder: (order: { team_id: number; position: number }[]) =>
+    fetchApi<{ status: string; num_teams: number }>("/draft/set-order", {
+      method: "POST",
+      body: { order },
+    }),
 };
 
 // ---------------------------------------------------------------------------
@@ -612,6 +618,7 @@ export interface MarkPickedResult {
   player_name: string;
   position: string;
   is_user_pick: boolean;
+  team_name: string;
 }
 
 export interface LiveDraftRosterPlayer {
@@ -629,6 +636,24 @@ export interface LiveDraftRecentPick {
   overall_pick: number;
   round: number;
   is_user_pick: boolean;
+  team_name: string;
+}
+
+export interface DraftOrderTeam {
+  team_id: number;
+  team_name: string;
+  owner_name: string;
+  draft_position: number;
+  is_user_team: boolean;
+}
+
+export interface DraftTeamRoster {
+  full_name: string;
+  position: string;
+  nfl_team: string;
+  projected_points: number;
+  round: number;
+  overall_pick: number;
 }
 
 export interface LiveDraftState {
@@ -642,4 +667,8 @@ export interface LiveDraftState {
   is_complete: boolean;
   user_roster: LiveDraftRosterPlayer[];
   recent_picks: LiveDraftRecentPick[];
+  draft_order: DraftOrderTeam[];
+  draft_order_set: boolean;
+  current_team: { team_id: number; team_name: string; owner_name: string; is_user_team: boolean } | null;
+  all_rosters: Record<number, DraftTeamRoster[]>;
 }

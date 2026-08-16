@@ -18,6 +18,15 @@ class SetPositionRequest(BaseModel):
     position: int  # 1-12, user's pick slot in round 1
 
 
+class DraftOrderEntry(BaseModel):
+    team_id: int
+    position: int
+
+
+class SetDraftOrderRequest(BaseModel):
+    order: list[DraftOrderEntry]
+
+
 # ---------------------------------------------------------------------------
 # Standard endpoints
 # ---------------------------------------------------------------------------
@@ -205,6 +214,60 @@ async def set_my_draft_position(body: SetPositionRequest):
 
 
 # ---------------------------------------------------------------------------
+# Live draft: set full draft order for all teams
+# ---------------------------------------------------------------------------
+
+@router.post("/set-order")
+async def set_draft_order(body: SetDraftOrderRequest):
+    """Set draft order for all teams. Maps each team to a draft slot (1-N)."""
+    db = await get_db()
+    try:
+        # Ensure draft_position column exists
+        try:
+            await db.execute("ALTER TABLE team ADD COLUMN draft_position INTEGER")
+            await db.commit()
+        except Exception:
+            pass
+
+        league_row = await db.execute_fetchall("SELECT id, num_teams FROM league LIMIT 1")
+        if not league_row:
+            raise HTTPException(status_code=404, detail="League not synced")
+        league_id = league_row[0]["id"]
+        num_teams = league_row[0]["num_teams"]
+
+        # Validate
+        if len(body.order) != num_teams:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Must provide exactly {num_teams} entries, got {len(body.order)}"
+            )
+        positions = [e.position for e in body.order]
+        if sorted(positions) != list(range(1, num_teams + 1)):
+            raise HTTPException(status_code=400, detail="Positions must be 1 through {num_teams} with no duplicates")
+
+        team_ids = [e.team_id for e in body.order]
+        teams = await db.execute_fetchall(
+            "SELECT id FROM team WHERE league_id = ?", (league_id,)
+        )
+        valid_ids = {t["id"] for t in teams}
+        for tid in team_ids:
+            if tid not in valid_ids:
+                raise HTTPException(status_code=400, detail=f"Team ID {tid} not found in league")
+
+        # Update all teams
+        for entry in body.order:
+            await db.execute(
+                "UPDATE team SET draft_position = ? WHERE id = ?",
+                (entry.position, entry.team_id)
+            )
+        await db.commit()
+
+        return {"status": "ok", "num_teams": num_teams}
+    finally:
+        await db.close()
+
+
+# ---------------------------------------------------------------------------
 # Live draft: available players (search)
 # ---------------------------------------------------------------------------
 
@@ -283,35 +346,30 @@ async def mark_player_picked(body: MarkPickedRequest):
         round_num = ((overall_pick - 1) // num_teams) + 1
         pick_in_round = ((overall_pick - 1) % num_teams) + 1
 
-        # Determine if it's user's pick (snake draft)
-        user_team = await db.execute_fetchall(
-            "SELECT id, draft_position FROM team WHERE is_user_team = 1 AND league_id = ?",
-            (league_id,)
-        )
-        user_team_id = user_team[0]["id"] if user_team else None
-        user_draft_pos = None
-        try:
-            user_draft_pos = user_team[0]["draft_position"] if user_team else None
-        except (IndexError, KeyError):
-            pass
-
         # Snake draft position calculation
         pos_in_round = ((overall_pick - 1) % num_teams)
         if round_num % 2 == 0:
             pos_in_round = num_teams - 1 - pos_in_round
         current_draft_pos = pos_in_round + 1
 
-        is_user_pick = (user_draft_pos is not None and current_draft_pos == user_draft_pos)
-
-        # Assign team
-        if is_user_pick and user_team_id:
-            team_id = user_team_id
+        # Look up team by draft_position
+        picking_team = await db.execute_fetchall(
+            "SELECT id, team_name, is_user_team FROM team WHERE draft_position = ? AND league_id = ?",
+            (current_draft_pos, league_id)
+        )
+        if picking_team:
+            team_id = picking_team[0]["id"]
+            team_name = picking_team[0]["team_name"]
+            is_user_pick = bool(picking_team[0]["is_user_team"])
         else:
+            # Fallback: draft order not set, assign to first non-user team
             other = await db.execute_fetchall(
-                "SELECT id FROM team WHERE is_user_team = 0 AND league_id = ? LIMIT 1",
+                "SELECT id, team_name FROM team WHERE is_user_team = 0 AND league_id = ? LIMIT 1",
                 (league_id,)
             )
             team_id = other[0]["id"] if other else 1
+            team_name = other[0]["team_name"] if other else "Unknown"
+            is_user_pick = False
 
         # Check player exists
         player_row = await db.execute_fetchall(
@@ -344,6 +402,7 @@ async def mark_player_picked(body: MarkPickedRequest):
             "player_name": player_row[0]["full_name"],
             "position": player_row[0]["position"],
             "is_user_pick": is_user_pick,
+            "team_name": team_name,
         }
     finally:
         await db.close()
@@ -412,11 +471,26 @@ async def get_live_state():
         picks_made = count_row[0]["cnt"] if count_row else 0
         overall_pick = picks_made + 1
 
-        # User draft position
-        user_team = await db.execute_fetchall(
-            "SELECT id, draft_position FROM team WHERE is_user_team = 1 AND league_id = ?",
+        # Draft order (all teams)
+        all_teams = await db.execute_fetchall(
+            "SELECT id, team_name, owner_name, is_user_team, draft_position FROM team WHERE league_id = ? ORDER BY draft_position ASC",
             (league_id,)
         )
+        draft_order = [
+            {
+                "team_id": t["id"],
+                "team_name": t["team_name"],
+                "owner_name": t["owner_name"] or "",
+                "draft_position": t["draft_position"],
+                "is_user_team": bool(t["is_user_team"]),
+            }
+            for t in all_teams
+            if t["draft_position"] is not None
+        ]
+        draft_order_set = len(draft_order) > 0
+
+        # User team info
+        user_team = [t for t in all_teams if t["is_user_team"]]
         user_team_id = user_team[0]["id"] if user_team else None
         user_draft_pos = None
         try:
@@ -424,26 +498,41 @@ async def get_live_state():
         except (IndexError, KeyError):
             pass
 
-        # Is it user's turn?
+        # Current picking team (snake draft)
         is_user_turn = False
         user_next_pick = None
+        current_team = None
         round_num = ((overall_pick - 1) // num_teams) + 1
 
-        if user_draft_pos and picks_made < total:
+        if draft_order_set and picks_made < total:
             pos_in_round = ((overall_pick - 1) % num_teams)
             if round_num % 2 == 0:
                 pos_in_round = num_teams - 1 - pos_in_round
-            is_user_turn = (pos_in_round + 1) == user_draft_pos
+            current_draft_pos = pos_in_round + 1
 
-            # Find user's next pick
-            for pn in range(overall_pick, total + 1):
-                r = ((pn - 1) // num_teams) + 1
-                p = ((pn - 1) % num_teams)
-                if r % 2 == 0:
-                    p = num_teams - 1 - p
-                if (p + 1) == user_draft_pos:
-                    user_next_pick = pn
+            # Find the team picking now
+            for t in all_teams:
+                if t["draft_position"] == current_draft_pos:
+                    current_team = {
+                        "team_id": t["id"],
+                        "team_name": t["team_name"],
+                        "owner_name": t["owner_name"] or "",
+                        "is_user_team": bool(t["is_user_team"]),
+                    }
                     break
+
+            if user_draft_pos:
+                is_user_turn = current_draft_pos == user_draft_pos
+
+                # Find user's next pick
+                for pn in range(overall_pick, total + 1):
+                    r = ((pn - 1) // num_teams) + 1
+                    p = ((pn - 1) % num_teams)
+                    if r % 2 == 0:
+                        p = num_teams - 1 - p
+                    if (p + 1) == user_draft_pos:
+                        user_next_pick = pn
+                        break
 
         # User's drafted players
         user_roster = []
@@ -468,10 +557,34 @@ async def get_live_state():
                 for r in roster_rows
             ]
 
+        # All team rosters
+        all_rosters: dict[int, list] = {}
+        if draft_order_set:
+            all_roster_rows = await db.execute_fetchall("""
+                SELECT dp.team_id, p.full_name, p.position, p.nfl_team,
+                       p.projected_points, dp.round, dp.overall_pick
+                FROM draft_pick dp
+                JOIN player p ON p.id = dp.player_id
+                WHERE dp.league_id = ?
+                ORDER BY dp.overall_pick
+            """, (league_id,))
+            for r in all_roster_rows:
+                tid = r["team_id"]
+                if tid not in all_rosters:
+                    all_rosters[tid] = []
+                all_rosters[tid].append({
+                    "full_name": r["full_name"],
+                    "position": r["position"],
+                    "nfl_team": r["nfl_team"],
+                    "projected_points": round(r["projected_points"] or 0, 1),
+                    "round": r["round"],
+                    "overall_pick": r["overall_pick"],
+                })
+
         # Recent picks (last 5)
         recent = await db.execute_fetchall("""
             SELECT p.full_name, p.position, dp.overall_pick, dp.round,
-                   t.is_user_team
+                   t.is_user_team, t.team_name
             FROM draft_pick dp
             JOIN player p ON p.id = dp.player_id
             JOIN team t ON t.id = dp.team_id
@@ -485,6 +598,7 @@ async def get_live_state():
                 "overall_pick": r["overall_pick"],
                 "round": r["round"],
                 "is_user_pick": bool(r["is_user_team"]),
+                "team_name": r["team_name"],
             }
             for r in recent
         ]
@@ -500,6 +614,10 @@ async def get_live_state():
             "is_complete": picks_made >= total,
             "user_roster": user_roster,
             "recent_picks": recent_picks,
+            "draft_order": draft_order,
+            "draft_order_set": draft_order_set,
+            "current_team": current_team,
+            "all_rosters": all_rosters,
         }
     finally:
         await db.close()

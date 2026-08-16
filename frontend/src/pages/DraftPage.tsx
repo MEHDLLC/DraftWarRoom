@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   useLiveDraftState,
   useDraftSuggestions,
@@ -6,11 +7,17 @@ import {
   useAvailablePlayers,
   useMarkPicked,
   useUndoLastPick,
-  useSetMyPosition,
+  useSetDraftOrder,
 } from "@/hooks/useDraft";
+import { fetchApi } from "@/api/client";
 import DraftValueTracker from "@/components/draft/DraftValueTracker";
 import LoadingSpinner from "@/components/shared/LoadingSpinner";
-import type { DraftSuggestion, AvailablePlayer } from "@/api/client";
+import type {
+  DraftSuggestion,
+  AvailablePlayer,
+  DraftOrderTeam,
+  DraftTeamRoster,
+} from "@/api/client";
 
 // ---------------------------------------------------------------------------
 // Position colors
@@ -26,36 +33,278 @@ const posColors: Record<string, string> = {
 };
 
 // ---------------------------------------------------------------------------
-// Setup: Set Draft Position
+// Backend team shape (from /league/teams)
 // ---------------------------------------------------------------------------
-function DraftPositionSetup({ numTeams, onSet }: { numTeams: number; onSet: (pos: number) => void }) {
-  const [pos, setPos] = useState(1);
+interface LeagueTeam {
+  id: number;
+  team_name: string;
+  owner_name: string | null;
+  is_user_team: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Setup: Set Draft Order (all teams)
+// ---------------------------------------------------------------------------
+function DraftOrderSetup({
+  onSet,
+  isPending,
+}: {
+  onSet: (order: { team_id: number; position: number }[]) => void;
+  isPending: boolean;
+}) {
+  const { data: teams, isLoading } = useQuery({
+    queryKey: ["league", "teams-for-draft"],
+    queryFn: () => fetchApi<LeagueTeam[]>("/league/teams"),
+  });
+
+  const [assignments, setAssignments] = useState<Record<number, number>>({});
+
+  // Auto-populate sequential positions when teams load
+  const teamsReady = teams && teams.length > 0;
+  if (teamsReady && Object.keys(assignments).length === 0) {
+    const initial: Record<number, number> = {};
+    teams.forEach((t, i) => {
+      initial[t.id] = i + 1;
+    });
+    // This is only called once when teams first load
+    setAssignments(initial);
+  }
+
+  const numTeams = teams?.length || 12;
+
+  const handleChange = (teamId: number, position: number) => {
+    setAssignments((prev) => {
+      const next = { ...prev };
+      // Swap: find who currently has this position and give them the old one
+      const oldPos = prev[teamId];
+      const otherTeamId = Object.entries(prev).find(
+        ([, p]) => p === position
+      )?.[0];
+      if (otherTeamId) {
+        next[Number(otherTeamId)] = oldPos;
+      }
+      next[teamId] = position;
+      return next;
+    });
+  };
+
+  const handleSubmit = () => {
+    const order = Object.entries(assignments).map(([teamId, position]) => ({
+      team_id: Number(teamId),
+      position,
+    }));
+    onSet(order);
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <LoadingSpinner size="md" label="Loading teams..." />
+      </div>
+    );
+  }
+
+  if (!teams || teams.length === 0) {
+    return (
+      <div className="mx-auto max-w-md rounded-xl border border-surface-700 bg-surface-800 p-6 text-center">
+        <p className="text-sm text-surface-400">
+          No teams found. Sync your league first.
+        </p>
+      </div>
+    );
+  }
 
   return (
-    <div className="mx-auto max-w-md rounded-xl border border-surface-700 bg-surface-800 p-6 text-center">
-      <h2 className="text-lg font-bold text-surface-100">Set Your Draft Position</h2>
-      <p className="mt-2 text-sm text-surface-400">
-        What pick number are you in round 1?
+    <div className="mx-auto max-w-lg rounded-xl border border-surface-700 bg-surface-800 p-6">
+      <h2 className="text-lg font-bold text-surface-100 text-center">
+        Set Draft Order
+      </h2>
+      <p className="mt-2 text-sm text-surface-400 text-center">
+        Assign each team their round 1 pick position. Snake draft order will be
+        calculated automatically.
       </p>
-      <div className="mt-4 flex items-center justify-center gap-3">
-        <select
-          value={pos}
-          onChange={(e) => setPos(Number(e.target.value))}
-          className="rounded-lg border border-surface-600 bg-surface-700 px-4 py-2.5 text-lg font-bold text-surface-100 focus:border-accent-500 focus:outline-none"
-        >
-          {Array.from({ length: numTeams }, (_, i) => (
-            <option key={i + 1} value={i + 1}>
-              Pick #{i + 1}
-            </option>
-          ))}
-        </select>
-        <button onClick={() => onSet(pos)} className="btn-primary px-6 py-2.5 text-sm font-semibold">
-          Set Position
-        </button>
+
+      <div className="mt-4 space-y-2">
+        {teams.map((team) => (
+          <div
+            key={team.id}
+            className={[
+              "flex items-center gap-3 rounded-lg px-3 py-2",
+              team.is_user_team
+                ? "border border-accent-500/30 bg-accent-500/5"
+                : "bg-surface-700/30",
+            ].join(" ")}
+          >
+            <select
+              value={assignments[team.id] || 1}
+              onChange={(e) => handleChange(team.id, Number(e.target.value))}
+              className="w-20 rounded border border-surface-600 bg-surface-700 px-2 py-1 text-sm font-bold text-surface-100 focus:border-accent-500 focus:outline-none"
+            >
+              {Array.from({ length: numTeams }, (_, i) => (
+                <option key={i + 1} value={i + 1}>
+                  #{i + 1}
+                </option>
+              ))}
+            </select>
+            <span
+              className={[
+                "flex-1 truncate text-sm font-medium",
+                team.is_user_team ? "text-accent-300" : "text-surface-200",
+              ].join(" ")}
+            >
+              {team.team_name}
+            </span>
+            <span className="text-xs text-surface-500">
+              {team.owner_name || ""}
+            </span>
+            {team.is_user_team && (
+              <span className="rounded bg-accent-500/20 px-1.5 py-0.5 text-[10px] font-bold text-accent-400">
+                YOU
+              </span>
+            )}
+          </div>
+        ))}
       </div>
-      <p className="mt-3 text-xs text-surface-500">
-        Snake draft: Round 1 you pick #{pos}, Round 2 you pick #{numTeams - pos + 1}, etc.
+
+      <button
+        onClick={handleSubmit}
+        disabled={isPending}
+        className="btn-primary mt-5 w-full py-2.5 text-sm font-semibold"
+      >
+        {isPending ? "Setting..." : "Start Draft"}
+      </button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Now Picking Banner
+// ---------------------------------------------------------------------------
+function NowPickingBanner({
+  currentTeam,
+  currentPick,
+  currentRound,
+}: {
+  currentTeam: { team_name: string; owner_name: string; is_user_team: boolean };
+  currentPick: number | null;
+  currentRound: number | null;
+}) {
+  if (currentTeam.is_user_team) {
+    return (
+      <div className="rounded-xl border-2 border-accent-400 bg-accent-500/10 p-4 text-center animate-pulse">
+        <p className="text-lg font-bold text-accent-300">YOUR PICK!</p>
+        <p className="text-xs text-accent-400">
+          Pick #{currentPick} &middot; Round {currentRound}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-xl border border-surface-600 bg-surface-800 p-3 text-center">
+      <p className="text-xs text-surface-500">Now Picking</p>
+      <p className="text-base font-bold text-surface-100">
+        {currentTeam.team_name}
       </p>
+      <p className="text-xs text-surface-500">
+        Pick #{currentPick} &middot; Round {currentRound}
+      </p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// All Team Rosters Accordion
+// ---------------------------------------------------------------------------
+function AllTeamRosters({
+  draftOrder,
+  allRosters,
+}: {
+  draftOrder: DraftOrderTeam[];
+  allRosters: Record<number, DraftTeamRoster[]>;
+}) {
+  const [expandedTeam, setExpandedTeam] = useState<number | null>(null);
+
+  return (
+    <div className="rounded-xl border border-surface-700 bg-surface-800">
+      <div className="border-b border-surface-700 px-4 py-2.5">
+        <h3 className="text-sm font-semibold text-surface-200">All Teams</h3>
+      </div>
+      <div className="divide-y divide-surface-700/50">
+        {draftOrder.map((team) => {
+          const roster = allRosters[team.team_id] || [];
+          const isExpanded = expandedTeam === team.team_id;
+
+          return (
+            <div key={team.team_id}>
+              <button
+                onClick={() =>
+                  setExpandedTeam(isExpanded ? null : team.team_id)
+                }
+                className={[
+                  "flex w-full items-center gap-2 px-4 py-2 text-left transition-colors hover:bg-surface-700/30",
+                  team.is_user_team ? "bg-accent-500/5" : "",
+                ].join(" ")}
+              >
+                <span className="w-6 text-xs font-bold text-surface-500">
+                  #{team.draft_position}
+                </span>
+                <span
+                  className={[
+                    "flex-1 truncate text-sm font-medium",
+                    team.is_user_team
+                      ? "text-accent-300"
+                      : "text-surface-200",
+                  ].join(" ")}
+                >
+                  {team.team_name}
+                </span>
+                <span className="text-xs text-surface-500">
+                  {roster.length} picks
+                </span>
+                <span className="text-xs text-surface-600">
+                  {isExpanded ? "\u25B2" : "\u25BC"}
+                </span>
+              </button>
+              {isExpanded && roster.length > 0 && (
+                <div className="border-t border-surface-700/30 bg-surface-900/30">
+                  {roster.map((p) => {
+                    const posClass =
+                      posColors[p.position] ||
+                      "bg-surface-700 text-surface-300";
+                    return (
+                      <div
+                        key={p.overall_pick}
+                        className="flex items-center gap-2 px-6 py-1.5"
+                      >
+                        <span className="w-5 text-[10px] text-surface-600">
+                          R{p.round}
+                        </span>
+                        <span
+                          className={`rounded px-1 py-0.5 text-[10px] font-bold ${posClass}`}
+                        >
+                          {p.position}
+                        </span>
+                        <span className="flex-1 truncate text-xs text-surface-300">
+                          {p.full_name}
+                        </span>
+                        <span className="text-[10px] text-surface-600">
+                          {p.nfl_team}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {isExpanded && roster.length === 0 && (
+                <div className="px-6 py-2 text-xs text-surface-600">
+                  No picks yet
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -63,8 +312,17 @@ function DraftPositionSetup({ numTeams, onSet }: { numTeams: number; onSet: (pos
 // ---------------------------------------------------------------------------
 // Suggestion Card
 // ---------------------------------------------------------------------------
-function SuggestionCard({ suggestion, rank, onPick }: { suggestion: DraftSuggestion; rank: number; onPick: () => void }) {
-  const posClass = posColors[suggestion.position] || "bg-surface-700 text-surface-300";
+function SuggestionCard({
+  suggestion,
+  rank,
+  onPick,
+}: {
+  suggestion: DraftSuggestion;
+  rank: number;
+  onPick: () => void;
+}) {
+  const posClass =
+    posColors[suggestion.position] || "bg-surface-700 text-surface-300";
 
   return (
     <div className="flex items-center gap-3 rounded-xl border border-accent-500/30 bg-accent-500/5 p-3">
@@ -80,13 +338,17 @@ function SuggestionCard({ suggestion, rank, onPick }: { suggestion: DraftSuggest
             {suggestion.full_name}
           </span>
           {suggestion.nfl_team && (
-            <span className="text-xs text-surface-500">{suggestion.nfl_team}</span>
+            <span className="text-xs text-surface-500">
+              {suggestion.nfl_team}
+            </span>
           )}
         </div>
         <p className="mt-0.5 text-xs text-surface-400">{suggestion.reason}</p>
       </div>
       <div className="flex flex-col items-end gap-1">
-        <span className="text-sm font-bold text-accent-400">{suggestion.projected_points} pts</span>
+        <span className="text-sm font-bold text-accent-400">
+          {suggestion.projected_points} pts
+        </span>
         <button
           onClick={onPick}
           className="rounded bg-accent-500/20 px-2 py-0.5 text-xs font-semibold text-accent-300 hover:bg-accent-500/40 transition-colors"
@@ -101,8 +363,17 @@ function SuggestionCard({ suggestion, rank, onPick }: { suggestion: DraftSuggest
 // ---------------------------------------------------------------------------
 // Player Row (available player in search results)
 // ---------------------------------------------------------------------------
-function PlayerRow({ player, onPick, isPicking }: { player: AvailablePlayer; onPick: () => void; isPicking: boolean }) {
-  const posClass = posColors[player.position] || "bg-surface-700 text-surface-300";
+function PlayerRow({
+  player,
+  onPick,
+  isPicking,
+}: {
+  player: AvailablePlayer;
+  onPick: () => void;
+  isPicking: boolean;
+}) {
+  const posClass =
+    posColors[player.position] || "bg-surface-700 text-surface-300";
 
   return (
     <div className="flex items-center gap-3 border-b border-surface-700/50 px-3 py-2 last:border-b-0 hover:bg-surface-700/20 transition-colors">
@@ -136,20 +407,24 @@ export default function DraftPage() {
   const [posFilter, setPosFilter] = useState("");
 
   const { data: liveState, isLoading: stateLoading } = useLiveDraftState();
-  const { data: suggestions } = useDraftSuggestions(!!liveState && liveState.picks_made > 0);
-  const { data: available, isLoading: availLoading } = useAvailablePlayers(search, posFilter);
+  const { data: suggestions } = useDraftSuggestions(
+    !!liveState && liveState.picks_made > 0
+  );
+  const { data: available, isLoading: availLoading } = useAvailablePlayers(
+    search,
+    posFilter
+  );
 
   const refreshMutation = useDraftRefresh();
   const markPicked = useMarkPicked();
   const undoLast = useUndoLastPick();
-  const setPosition = useSetMyPosition();
+  const setDraftOrder = useSetDraftOrder();
 
   const handlePick = (playerId: number) => {
     markPicked.mutate(playerId);
   };
 
-  const needsSetup = liveState && liveState.user_draft_position === null;
-  const numTeams = 12; // From league
+  const needsSetup = liveState && !liveState.draft_order_set;
 
   return (
     <div className="space-y-4">
@@ -207,7 +482,9 @@ export default function DraftPage() {
           onClick={() => setTab("live")}
           className={[
             "flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-colors",
-            tab === "live" ? "bg-surface-700 text-surface-100" : "text-surface-400 hover:text-surface-200",
+            tab === "live"
+              ? "bg-surface-700 text-surface-100"
+              : "text-surface-400 hover:text-surface-200",
           ].join(" ")}
         >
           Live Draft
@@ -216,7 +493,9 @@ export default function DraftPage() {
           onClick={() => setTab("value")}
           className={[
             "flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-colors",
-            tab === "value" ? "bg-surface-700 text-surface-100" : "text-surface-400 hover:text-surface-200",
+            tab === "value"
+              ? "bg-surface-700 text-surface-100"
+              : "text-surface-400 hover:text-surface-200",
           ].join(" ")}
         >
           Value Tracker
@@ -231,45 +510,51 @@ export default function DraftPage() {
         ) : needsSetup ? (
           <div className="space-y-6">
             <div className="rounded-lg border border-accent-500/30 bg-accent-500/5 px-4 py-3 text-sm text-accent-300">
-              First, click "Load Players" above to pull in the full player pool from ESPN.
+              First, click "Load Players" above to pull in the full player pool
+              from ESPN. Then set the draft order below.
             </div>
-            <DraftPositionSetup
-              numTeams={numTeams}
-              onSet={(pos) => setPosition.mutate(pos)}
+            <DraftOrderSetup
+              onSet={(order) => setDraftOrder.mutate(order)}
+              isPending={setDraftOrder.isPending}
             />
           </div>
         ) : (
           <div className="grid gap-4 lg:grid-cols-3">
-            {/* Left column: Your Turn / Suggestions + Your Roster */}
+            {/* Left column: Now Picking / Suggestions + Rosters */}
             <div className="space-y-4 lg:col-span-1">
-              {/* Your Turn indicator */}
-              {liveState && liveState.is_user_turn && (
-                <div className="rounded-xl border-2 border-accent-400 bg-accent-500/10 p-4 text-center animate-pulse">
-                  <p className="text-lg font-bold text-accent-300">YOUR PICK!</p>
-                  <p className="text-xs text-accent-400">
-                    Pick #{liveState.current_pick} &middot; Round {liveState.current_round}
-                  </p>
-                </div>
+              {/* Now Picking banner */}
+              {liveState && liveState.current_team && !liveState.is_complete && (
+                <NowPickingBanner
+                  currentTeam={liveState.current_team}
+                  currentPick={liveState.current_pick}
+                  currentRound={liveState.current_round}
+                />
               )}
 
-              {/* Next pick info */}
-              {liveState && !liveState.is_user_turn && liveState.user_next_pick && (
-                <div className="rounded-xl border border-surface-700 bg-surface-800 p-3 text-center">
-                  <p className="text-xs text-surface-500">Your next pick</p>
-                  <p className="text-lg font-bold text-surface-200">
-                    #{liveState.user_next_pick}
-                  </p>
-                  <p className="text-xs text-surface-500">
-                    {liveState.user_next_pick - (liveState.current_pick || 0)} picks away
-                  </p>
-                </div>
-              )}
+              {/* Next pick info (when it's not user's turn) */}
+              {liveState &&
+                !liveState.is_user_turn &&
+                liveState.user_next_pick && (
+                  <div className="rounded-xl border border-surface-700 bg-surface-800 p-3 text-center">
+                    <p className="text-xs text-surface-500">Your next pick</p>
+                    <p className="text-lg font-bold text-surface-200">
+                      #{liveState.user_next_pick}
+                    </p>
+                    <p className="text-xs text-surface-500">
+                      {liveState.user_next_pick -
+                        (liveState.current_pick || 0)}{" "}
+                      picks away
+                    </p>
+                  </div>
+                )}
 
               {/* Suggestions */}
               {suggestions && suggestions.suggestions.length > 0 && (
                 <div className="space-y-2">
                   <h3 className="text-sm font-semibold text-surface-300">
-                    {liveState?.is_user_turn ? "Recommended Picks:" : "Best Available For You:"}
+                    {liveState?.is_user_turn
+                      ? "Recommended Picks:"
+                      : "Best Available For You:"}
                   </h3>
                   {suggestions.suggestions.map((s, i) => (
                     <SuggestionCard
@@ -292,17 +577,28 @@ export default function DraftPage() {
                   </div>
                   <div className="divide-y divide-surface-700/50">
                     {liveState.user_roster.map((p) => {
-                      const posClass = posColors[p.position] || "bg-surface-700 text-surface-300";
+                      const posClass =
+                        posColors[p.position] ||
+                        "bg-surface-700 text-surface-300";
                       return (
-                        <div key={p.overall_pick} className="flex items-center gap-2 px-4 py-2">
-                          <span className="w-6 text-xs text-surface-600">R{p.round}</span>
-                          <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${posClass}`}>
+                        <div
+                          key={p.overall_pick}
+                          className="flex items-center gap-2 px-4 py-2"
+                        >
+                          <span className="w-6 text-xs text-surface-600">
+                            R{p.round}
+                          </span>
+                          <span
+                            className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${posClass}`}
+                          >
                             {p.position}
                           </span>
                           <span className="flex-1 truncate text-sm font-medium text-surface-200">
                             {p.full_name}
                           </span>
-                          <span className="text-xs text-surface-500">{p.nfl_team}</span>
+                          <span className="text-xs text-surface-500">
+                            {p.nfl_team}
+                          </span>
                         </div>
                       );
                     })}
@@ -314,11 +610,15 @@ export default function DraftPage() {
               {liveState && liveState.recent_picks.length > 0 && (
                 <div className="rounded-xl border border-surface-700 bg-surface-800">
                   <div className="border-b border-surface-700 px-4 py-2.5">
-                    <h3 className="text-sm font-semibold text-surface-200">Recent Picks</h3>
+                    <h3 className="text-sm font-semibold text-surface-200">
+                      Recent Picks
+                    </h3>
                   </div>
                   <div className="divide-y divide-surface-700/50">
                     {liveState.recent_picks.map((p) => {
-                      const posClass = posColors[p.position] || "bg-surface-700 text-surface-300";
+                      const posClass =
+                        posColors[p.position] ||
+                        "bg-surface-700 text-surface-300";
                       return (
                         <div
                           key={p.overall_pick}
@@ -330,14 +630,23 @@ export default function DraftPage() {
                           <span className="w-6 text-xs font-bold text-surface-500">
                             #{p.overall_pick}
                           </span>
-                          <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${posClass}`}>
+                          <span
+                            className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${posClass}`}
+                          >
                             {p.position}
                           </span>
-                          <span className={[
-                            "flex-1 truncate text-sm font-medium",
-                            p.is_user_pick ? "text-accent-300" : "text-surface-300",
-                          ].join(" ")}>
+                          <span
+                            className={[
+                              "flex-1 truncate text-sm font-medium",
+                              p.is_user_pick
+                                ? "text-accent-300"
+                                : "text-surface-300",
+                            ].join(" ")}
+                          >
                             {p.full_name}
+                          </span>
+                          <span className="text-xs text-surface-600">
+                            {p.team_name}
                           </span>
                         </div>
                       );
@@ -345,6 +654,16 @@ export default function DraftPage() {
                   </div>
                 </div>
               )}
+
+              {/* All Team Rosters */}
+              {liveState &&
+                liveState.draft_order_set &&
+                liveState.draft_order.length > 0 && (
+                  <AllTeamRosters
+                    draftOrder={liveState.draft_order}
+                    allRosters={liveState.all_rosters}
+                  />
+                )}
             </div>
 
             {/* Right column: Available Players */}
@@ -410,7 +729,7 @@ export default function DraftPage() {
                 {available && available.length > 0 && (
                   <div className="border-t border-surface-700 px-3 py-2 text-xs text-surface-500">
                     Showing {available.length} players
-                    {liveState && ` · ${liveState.picks_made} picked`}
+                    {liveState && ` \u00b7 ${liveState.picks_made} picked`}
                   </div>
                 )}
               </div>

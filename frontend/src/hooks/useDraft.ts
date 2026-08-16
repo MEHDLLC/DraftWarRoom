@@ -96,3 +96,14 @@ export function useSetMyPosition() {
     },
   });
 }
+
+export function useSetDraftOrder() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (order: { team_id: number; position: number }[]) =>
+      draftApi.setDraftOrder(order),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["draft"] });
+    },
+  });
+}
