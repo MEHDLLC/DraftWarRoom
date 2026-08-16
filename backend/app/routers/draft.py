@@ -33,6 +33,13 @@ class PlacePickRequest(BaseModel):
     draft_position: int  # 1-based team draft slot
 
 
+class AddPlayerRequest(BaseModel):
+    full_name: str
+    position: str
+    nfl_team: str
+    projected_points: float = 0
+
+
 # ---------------------------------------------------------------------------
 # Standard endpoints
 # ---------------------------------------------------------------------------
@@ -410,6 +417,38 @@ async def mark_player_picked(body: MarkPickedRequest):
             "is_user_pick": is_user_pick,
             "team_name": team_name,
         }
+    finally:
+        await db.close()
+
+
+# ---------------------------------------------------------------------------
+# Live draft: add a missing player to the player table
+# ---------------------------------------------------------------------------
+
+@router.post("/add-player")
+async def add_player(body: AddPlayerRequest):
+    """Add a player that's missing from the database (e.g. a D/ST not loaded by ESPN)."""
+    db = await get_db()
+    try:
+        existing = await db.execute_fetchall(
+            "SELECT id, full_name FROM player WHERE full_name = ?",
+            (body.full_name,),
+        )
+        if existing:
+            return {"status": "already_exists", "player_id": existing[0]["id"], "full_name": existing[0]["full_name"]}
+
+        await db.execute(
+            """INSERT INTO player (full_name, position, nfl_team, projected_points, ros_projection, composite_score,
+               trade_value, boom_probability, bust_probability, sleeper_trending_add, sleeper_trending_drop)
+               VALUES (?, ?, ?, ?, ?, 0, 0, 0, 0, 0, 0)""",
+            (body.full_name, body.position.upper(), body.nfl_team.upper(), body.projected_points, body.projected_points),
+        )
+        await db.commit()
+
+        row = await db.execute_fetchall(
+            "SELECT id FROM player WHERE full_name = ?", (body.full_name,)
+        )
+        return {"status": "created", "player_id": row[0]["id"], "full_name": body.full_name}
     finally:
         await db.close()
 
