@@ -27,6 +27,12 @@ class SetDraftOrderRequest(BaseModel):
     order: list[DraftOrderEntry]
 
 
+class PlacePickRequest(BaseModel):
+    player_id: int
+    round: int
+    draft_position: int  # 1-based team draft slot
+
+
 # ---------------------------------------------------------------------------
 # Standard endpoints
 # ---------------------------------------------------------------------------
@@ -404,6 +410,111 @@ async def mark_player_picked(body: MarkPickedRequest):
             "is_user_pick": is_user_pick,
             "team_name": team_name,
         }
+    finally:
+        await db.close()
+
+
+# ---------------------------------------------------------------------------
+# Live draft: place a pick at a specific round + team slot (no shifting)
+# ---------------------------------------------------------------------------
+
+@router.post("/place-pick")
+async def place_pick(body: PlacePickRequest):
+    """Place a player at a specific round + draft_position slot.
+    If the slot is already taken, the old pick is replaced (no shifting).
+    Uses snake draft logic to compute overall_pick."""
+    db = await get_db()
+    try:
+        league_row = await db.execute_fetchall("SELECT id, num_teams FROM league LIMIT 1")
+        if not league_row:
+            raise HTTPException(status_code=404, detail="League not synced")
+        league_id = league_row[0]["id"]
+        num_teams = league_row[0]["num_teams"]
+
+        if body.round < 1:
+            raise HTTPException(status_code=400, detail="Round must be >= 1")
+        if body.draft_position < 1 or body.draft_position > num_teams:
+            raise HTTPException(
+                status_code=400,
+                detail=f"draft_position must be 1-{num_teams}",
+            )
+
+        # Snake draft: compute overall_pick from round + draft_position
+        if body.round % 2 == 1:
+            # Odd round: normal order
+            overall_pick = (body.round - 1) * num_teams + body.draft_position
+        else:
+            # Even round: reversed (snake)
+            overall_pick = (body.round - 1) * num_teams + (num_teams - body.draft_position + 1)
+
+        pick_in_round = ((overall_pick - 1) % num_teams) + 1
+
+        # Look up the team at this draft_position
+        picking_team = await db.execute_fetchall(
+            "SELECT id, team_name, is_user_team FROM team WHERE draft_position = ? AND league_id = ?",
+            (body.draft_position, league_id),
+        )
+        if not picking_team:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No team found at draft position {body.draft_position}",
+            )
+        team_id = picking_team[0]["id"]
+        team_name = picking_team[0]["team_name"]
+
+        # Check player exists
+        player_row = await db.execute_fetchall(
+            "SELECT id, full_name, position FROM player WHERE id = ?",
+            (body.player_id,),
+        )
+        if not player_row:
+            raise HTTPException(status_code=404, detail="Player not found")
+
+        # If this player is already drafted elsewhere, remove that pick first
+        existing_player = await db.execute_fetchall(
+            "SELECT id, overall_pick FROM draft_pick WHERE player_id = ? AND league_id = ?",
+            (body.player_id, league_id),
+        )
+        if existing_player:
+            await db.execute(
+                "DELETE FROM draft_pick WHERE id = ?",
+                (existing_player[0]["id"],),
+            )
+
+        # Check if a pick already exists at this slot
+        replaced_player = None
+        existing_slot = await db.execute_fetchall(
+            "SELECT dp.id, p.full_name FROM draft_pick dp JOIN player p ON dp.player_id = p.id WHERE dp.overall_pick = ? AND dp.league_id = ?",
+            (overall_pick, league_id),
+        )
+        if existing_slot:
+            replaced_player = existing_slot[0]["full_name"]
+            await db.execute(
+                "DELETE FROM draft_pick WHERE id = ?",
+                (existing_slot[0]["id"],),
+            )
+
+        # Insert the new pick
+        await db.execute(
+            """
+            INSERT INTO draft_pick (league_id, team_id, player_id, round, pick_number, overall_pick)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (league_id, team_id, body.player_id, body.round, pick_in_round, overall_pick),
+        )
+        await db.commit()
+
+        result = {
+            "status": "ok",
+            "player_name": player_row[0]["full_name"],
+            "overall_pick": overall_pick,
+            "round": body.round,
+            "draft_position": body.draft_position,
+            "team_name": team_name,
+        }
+        if replaced_player:
+            result["replaced_player"] = replaced_player
+        return result
     finally:
         await db.close()
 

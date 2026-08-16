@@ -107,6 +107,17 @@ export function useSetMyPosition() {
   });
 }
 
+export function usePlacePick() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (params: { player_id: number; round: number; draft_position: number }) =>
+      draftApi.placePick(params),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["draft"] });
+    },
+  });
+}
+
 export function useSetDraftOrder() {
   const queryClient = useQueryClient();
   return useMutation({

@@ -6,6 +6,7 @@ import {
   useDraftRefresh,
   useAvailablePlayers,
   useMarkPicked,
+  usePlacePick,
   useUndoLastPick,
   useSetDraftOrder,
   useRemovePick,
@@ -399,30 +400,81 @@ function PlayerRow({
   player,
   onPick,
   isPicking,
+  selectedRound,
+  onRoundChange,
+  selectedTeamPos,
+  onTeamPosChange,
+  onPlace,
+  isPlacing,
+  totalRounds,
+  draftOrder,
 }: {
   player: AvailablePlayer;
   onPick: () => void;
   isPicking: boolean;
+  selectedRound: number;
+  onRoundChange: (round: number) => void;
+  selectedTeamPos: number;
+  onTeamPosChange: (pos: number) => void;
+  onPlace: () => void;
+  isPlacing: boolean;
+  totalRounds: number;
+  draftOrder: DraftOrderTeam[];
 }) {
   const posClass =
     posColors[player.position] || "bg-surface-700 text-surface-300";
 
   return (
-    <div className="flex items-center gap-3 border-b border-surface-700/50 px-3 py-2 last:border-b-0 hover:bg-surface-700/20 transition-colors">
+    <div className="flex items-center gap-2 border-b border-surface-700/50 px-3 py-2 last:border-b-0 hover:bg-surface-700/20 transition-colors">
       <span className={`rounded px-1.5 py-0.5 text-xs font-bold ${posClass}`}>
         {player.position}
       </span>
-      <span className="flex-1 truncate text-sm font-medium text-surface-200">
+      <span className="min-w-0 flex-1 truncate text-sm font-medium text-surface-200">
         {player.full_name}
       </span>
-      <span className="text-xs text-surface-500">{player.nfl_team}</span>
-      <span className="w-16 text-right text-xs text-surface-400">
-        {player.projected_points} pts
+      <span className="text-xs text-surface-500 hidden sm:inline">{player.nfl_team}</span>
+      <span className="w-12 text-right text-xs text-surface-400">
+        {player.projected_points}
       </span>
+      {/* Round selector */}
+      <select
+        value={selectedRound}
+        onChange={(e) => onRoundChange(Number(e.target.value))}
+        className="w-16 rounded border border-surface-600 bg-surface-700 px-1 py-1 text-xs text-surface-200 focus:border-accent-500 focus:outline-none"
+        title="Round"
+      >
+        {Array.from({ length: totalRounds }, (_, i) => (
+          <option key={i + 1} value={i + 1}>
+            R{i + 1}
+          </option>
+        ))}
+      </select>
+      {/* Team selector */}
+      <select
+        value={selectedTeamPos}
+        onChange={(e) => onTeamPosChange(Number(e.target.value))}
+        className="w-24 rounded border border-surface-600 bg-surface-700 px-1 py-1 text-xs text-surface-200 focus:border-accent-500 focus:outline-none truncate"
+        title="Team"
+      >
+        {draftOrder.map((t) => (
+          <option key={t.draft_position} value={t.draft_position}>
+            #{t.draft_position} {t.team_name.slice(0, 10)}
+          </option>
+        ))}
+      </select>
+      {/* Place button */}
+      <button
+        onClick={onPlace}
+        disabled={isPlacing}
+        className="rounded-lg bg-accent-500/20 px-2.5 py-1 text-xs font-semibold text-accent-300 hover:bg-accent-500/40 transition-colors disabled:opacity-50"
+      >
+        Place
+      </button>
+      {/* Sequential pick button */}
       <button
         onClick={onPick}
         disabled={isPicking}
-        className="rounded-lg bg-surface-700 px-3 py-1 text-xs font-medium text-surface-300 hover:bg-danger-500/20 hover:text-danger-300 transition-colors disabled:opacity-50"
+        className="rounded-lg bg-surface-700 px-2.5 py-1 text-xs font-medium text-surface-300 hover:bg-danger-500/20 hover:text-danger-300 transition-colors disabled:opacity-50"
       >
         Picked
       </button>
@@ -447,14 +499,33 @@ export default function DraftPage() {
     posFilter
   );
 
+  // Default round/team for place-pick selectors
+  const defaultRound = liveState?.current_round ?? 1;
+  const defaultTeamPos = liveState?.current_team
+    ? (liveState.draft_order.find(
+        (t) => t.team_id === liveState.current_team!.team_id
+      )?.draft_position ?? 1)
+    : 1;
+  const [placeRound, setPlaceRound] = useState(defaultRound);
+  const [placeTeamPos, setPlaceTeamPos] = useState(defaultTeamPos);
+
   const refreshMutation = useDraftRefresh();
   const markPicked = useMarkPicked();
+  const placePick = usePlacePick();
   const undoLast = useUndoLastPick();
   const setDraftOrder = useSetDraftOrder();
   const removePick = useRemovePick();
 
   const handlePick = (playerId: number) => {
     markPicked.mutate(playerId);
+  };
+
+  const handlePlace = (playerId: number) => {
+    placePick.mutate({
+      player_id: playerId,
+      round: placeRound,
+      draft_position: placeTeamPos,
+    });
   };
 
   const needsSetup = liveState && !liveState.draft_order_set;
@@ -499,6 +570,16 @@ export default function DraftPage() {
       {refreshMutation.isSuccess && refreshMutation.data && (
         <div className="rounded-lg border border-success-500/30 bg-success-500/10 px-4 py-2 text-sm text-success-300">
           {refreshMutation.data.players_loaded} players loaded. Ready to draft!
+        </div>
+      )}
+
+      {/* Place pick result */}
+      {placePick.isSuccess && placePick.data && (
+        <div className="rounded-lg border border-accent-500/30 bg-accent-500/10 px-4 py-2 text-sm text-accent-300">
+          Placed {placePick.data.player_name} at R{placePick.data.round} pick #{placePick.data.overall_pick} ({placePick.data.team_name})
+          {placePick.data.replaced_player && (
+            <span className="text-warning-300"> — replaced {placePick.data.replaced_player}</span>
+          )}
         </div>
       )}
 
@@ -780,6 +861,14 @@ export default function DraftPage() {
                         player={player}
                         onPick={() => handlePick(player.id)}
                         isPicking={markPicked.isPending}
+                        selectedRound={placeRound}
+                        onRoundChange={setPlaceRound}
+                        selectedTeamPos={placeTeamPos}
+                        onTeamPosChange={setPlaceTeamPos}
+                        onPlace={() => handlePlace(player.id)}
+                        isPlacing={placePick.isPending}
+                        totalRounds={16}
+                        draftOrder={liveState?.draft_order ?? []}
                       />
                     ))
                   )}

@@ -308,6 +308,12 @@ export const draftApi = {
       method: "POST",
       body: { order },
     }),
+
+  placePick: (params: { player_id: number; round: number; draft_position: number }) =>
+    fetchApi<PlacePickResult>("/draft/place-pick", {
+      method: "POST",
+      body: params,
+    }),
 };
 
 // ---------------------------------------------------------------------------
@@ -614,6 +620,16 @@ export interface AvailablePlayer {
   nfl_team: string;
   projected_points: number;
   headshot_url: string | null;
+}
+
+export interface PlacePickResult {
+  status: string;
+  player_name: string;
+  overall_pick: number;
+  round: number;
+  draft_position: number;
+  team_name: string;
+  replaced_player?: string;
 }
 
 export interface MarkPickedResult {
