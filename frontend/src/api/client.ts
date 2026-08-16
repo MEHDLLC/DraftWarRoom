@@ -535,17 +535,32 @@ export interface DraftPick {
   player?: Player;
 }
 
+export interface DraftValueSummary {
+  total_value: number;
+  avg_value_per_pick: number;
+  best_pick: DraftPickValue | null;
+  worst_pick: DraftPickValue | null;
+}
+
 export interface DraftValueTracker {
   picks: DraftPickValue[];
-  bestAvailable: Player[];
-  recommendations: string[];
+  summary: DraftValueSummary;
 }
 
 export interface DraftPickValue {
-  player: Player;
-  adp: number;
-  pickNumber: number;
-  value: number; // positive = good value, negative = reach
+  round: number;
+  pick_number: number;
+  overall_pick: number;
+  player_name: string;
+  player_id: number;
+  position: string;
+  nfl_team: string;
+  team_name: string;
+  is_user_team: boolean;
+  adp: number | null;
+  value_diff: number;
+  composite_score: number;
+  performance_grade: string;
 }
 
 export interface DraftBoardTeam {

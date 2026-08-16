@@ -1,5 +1,4 @@
 import { useDraftValueTracker } from "@/hooks/useDraft";
-import { useExplainMode } from "@/context/ExplainModeContext";
 import type { DraftPickValue } from "@/api/client";
 import LoadingSpinner from "@/components/shared/LoadingSpinner";
 import EmptyState from "@/components/shared/EmptyState";
@@ -65,7 +64,6 @@ const positionColors: Record<string, string> = {
 
 // ── Main component ─────────────────────────────────────────────────────
 export default function DraftValueTracker() {
-  const { explainMode } = useExplainMode();
   const { data: tracker, isLoading, isError, error, refetch } =
     useDraftValueTracker();
 
@@ -99,16 +97,8 @@ export default function DraftValueTracker() {
     );
   }
 
-  // Compute summary stats
-  const totalValue = tracker.picks.reduce((sum, p) => sum + p.value, 0);
-  const bestPick = tracker.picks.reduce(
-    (best, p) => (p.value > best.value ? p : best),
-    tracker.picks[0]
-  );
-  const worstPick = tracker.picks.reduce(
-    (worst, p) => (p.value < worst.value ? p : worst),
-    tracker.picks[0]
-  );
+  const { summary } = tracker;
+  const totalValue = summary.total_value;
 
   return (
     <div className="space-y-6">
@@ -119,18 +109,22 @@ export default function DraftValueTracker() {
           value={`${totalValue >= 0 ? "+" : ""}${totalValue.toFixed(1)}`}
           colorClass={totalValue >= 0 ? "text-success-400" : "text-danger-400"}
         />
-        <StatCard
-          label="Best Pick"
-          value={bestPick.player.name}
-          subtext={`+${bestPick.value.toFixed(1)} vs ADP (Pick ${bestPick.pickNumber})`}
-          colorClass="text-success-400"
-        />
-        <StatCard
-          label="Worst Pick"
-          value={worstPick.player.name}
-          subtext={`${worstPick.value.toFixed(1)} vs ADP (Pick ${worstPick.pickNumber})`}
-          colorClass="text-danger-400"
-        />
+        {summary.best_pick && (
+          <StatCard
+            label="Best Pick"
+            value={summary.best_pick.player_name}
+            subtext={`+${summary.best_pick.value_diff.toFixed(1)} vs ADP (Pick ${summary.best_pick.overall_pick})`}
+            colorClass="text-success-400"
+          />
+        )}
+        {summary.worst_pick && (
+          <StatCard
+            label="Worst Pick"
+            value={summary.worst_pick.player_name}
+            subtext={`${summary.worst_pick.value_diff.toFixed(1)} vs ADP (Pick ${summary.worst_pick.overall_pick})`}
+            colorClass="text-danger-400"
+          />
+        )}
       </div>
 
       {/* ── Picks table ── */}
@@ -147,65 +141,44 @@ export default function DraftValueTracker() {
 
         {/* Table rows */}
         {tracker.picks.map((pick: DraftPickValue, idx: number) => {
-          const round = Math.floor((pick.pickNumber - 1) / 12) + 1;
-          const posColor = positionColors[pick.player.position] ?? "text-surface-300";
+          const posColor = positionColors[pick.position] ?? "text-surface-300";
 
           return (
             <div
               key={idx}
               className={[
                 "grid grid-cols-12 gap-2 items-center px-4 py-2.5 text-sm border-b border-surface-700/50 last:border-b-0 transition-colors hover:bg-surface-700/30",
-                pick.value > 0 ? "bg-success-400/[0.02]" : pick.value < 0 ? "bg-danger-400/[0.02]" : "",
+                pick.value_diff > 0 ? "bg-success-400/[0.02]" : pick.value_diff < 0 ? "bg-danger-400/[0.02]" : "",
               ].join(" ")}
             >
-              <div className="col-span-1 text-xs text-surface-500">{round}</div>
+              <div className="col-span-1 text-xs text-surface-500">{pick.round}</div>
               <div className="col-span-1 text-xs text-surface-400">
-                {pick.pickNumber}
+                {pick.overall_pick}
               </div>
               <div className="col-span-4 sm:col-span-5 flex items-center gap-2 min-w-0">
                 <span className={`text-xs font-medium ${posColor}`}>
-                  {pick.player.position}
+                  {pick.position}
                 </span>
                 <span className="truncate font-medium text-surface-100">
-                  {pick.player.name}
+                  {pick.player_name}
                 </span>
                 <span className="hidden text-xs text-surface-500 sm:inline">
-                  {pick.player.team}
+                  {pick.nfl_team}
                 </span>
               </div>
               <div className="col-span-2 text-center text-xs text-surface-400">
-                {pick.adp.toFixed(1)}
+                {pick.adp != null ? pick.adp.toFixed(1) : "—"}
               </div>
               <div className="col-span-2 text-center text-xs text-surface-400">
-                {pick.pickNumber}
+                {pick.overall_pick}
               </div>
               <div className="col-span-2 sm:col-span-1 flex justify-end">
-                <ValueBadge value={pick.value} />
+                <ValueBadge value={pick.value_diff} />
               </div>
             </div>
           );
         })}
       </div>
-
-      {/* ── AI Recommendations ── */}
-      {explainMode && tracker.recommendations.length > 0 && (
-        <div className="bg-surface-800 rounded-xl border border-surface-700 p-4">
-          <h3 className="text-sm font-semibold text-surface-200">
-            Draft Insights
-          </h3>
-          <ul className="mt-2 space-y-1.5">
-            {tracker.recommendations.map((rec, idx) => (
-              <li
-                key={idx}
-                className="flex items-start gap-2 text-xs text-surface-300"
-              >
-                <span className="mt-1 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-accent-400" />
-                {rec}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
     </div>
   );
 }
