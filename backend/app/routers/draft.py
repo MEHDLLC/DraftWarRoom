@@ -409,6 +409,98 @@ async def mark_player_picked(body: MarkPickedRequest):
 
 
 # ---------------------------------------------------------------------------
+# Live draft: insert a pick at a specific slot, shifting others up
+# ---------------------------------------------------------------------------
+
+class InsertPickRequest(BaseModel):
+    player_id: int
+    overall_pick: int
+    team_id: int
+
+
+@router.post("/insert-pick")
+async def insert_pick_at_position(body: InsertPickRequest):
+    """Insert a pick at a specific overall_pick, shifting later picks up by 1."""
+    db = await get_db()
+    try:
+        league_row = await db.execute_fetchall("SELECT id, num_teams FROM league LIMIT 1")
+        if not league_row:
+            raise HTTPException(status_code=404, detail="League not synced")
+        league_id = league_row[0]["id"]
+        num_teams = league_row[0]["num_teams"]
+
+        # Verify player exists and is not drafted
+        player_row = await db.execute_fetchall(
+            "SELECT id, full_name FROM player WHERE id = ?", (body.player_id,)
+        )
+        if not player_row:
+            raise HTTPException(status_code=404, detail="Player not found")
+        already = await db.execute_fetchall(
+            "SELECT id FROM draft_pick WHERE player_id = ? AND league_id = ?",
+            (body.player_id, league_id)
+        )
+        if already:
+            raise HTTPException(status_code=400, detail="Player already drafted")
+
+        # Shift all picks at or after the target slot UP by 1
+        later_picks = await db.execute_fetchall("""
+            SELECT dp.id, dp.overall_pick
+            FROM draft_pick dp
+            WHERE dp.league_id = ? AND dp.overall_pick >= ?
+            ORDER BY dp.overall_pick DESC
+        """, (league_id, body.overall_pick))
+
+        teams_by_pos = {}
+        all_teams = await db.execute_fetchall(
+            "SELECT id, draft_position FROM team WHERE league_id = ? AND draft_position IS NOT NULL",
+            (league_id,)
+        )
+        for t in all_teams:
+            teams_by_pos[t["draft_position"]] = t["id"]
+
+        for row in later_picks:
+            new_overall = row["overall_pick"] + 1
+            new_round = ((new_overall - 1) // num_teams) + 1
+            new_pick_in_round = ((new_overall - 1) % num_teams) + 1
+            pos_in_round = (new_overall - 1) % num_teams
+            if new_round % 2 == 0:
+                pos_in_round = num_teams - 1 - pos_in_round
+            draft_pos = pos_in_round + 1
+            new_team_id = teams_by_pos.get(draft_pos)
+            if new_team_id:
+                await db.execute("""
+                    UPDATE draft_pick
+                    SET overall_pick = ?, round = ?, pick_number = ?, team_id = ?
+                    WHERE id = ?
+                """, (new_overall, new_round, new_pick_in_round, new_team_id, row["id"]))
+            else:
+                await db.execute("""
+                    UPDATE draft_pick
+                    SET overall_pick = ?, round = ?, pick_number = ?
+                    WHERE id = ?
+                """, (new_overall, new_round, new_pick_in_round, row["id"]))
+
+        # Insert the new pick at the target slot
+        target_round = ((body.overall_pick - 1) // num_teams) + 1
+        target_pick_in_round = ((body.overall_pick - 1) % num_teams) + 1
+        await db.execute("""
+            INSERT INTO draft_pick (league_id, team_id, player_id, round, pick_number, overall_pick)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (league_id, body.team_id, body.player_id, target_round, target_pick_in_round, body.overall_pick))
+
+        await db.commit()
+
+        return {
+            "status": "ok",
+            "inserted_player": player_row[0]["full_name"],
+            "overall_pick": body.overall_pick,
+            "picks_shifted": len(later_picks),
+        }
+    finally:
+        await db.close()
+
+
+# ---------------------------------------------------------------------------
 # Live draft: remove a specific pick (by overall_pick number)
 # ---------------------------------------------------------------------------
 
