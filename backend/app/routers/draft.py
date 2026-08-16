@@ -391,6 +391,13 @@ async def get_live_state():
     """Get current live draft state: pick count, user's turn, user roster."""
     db = await get_db()
     try:
+        # Ensure draft_position column exists
+        try:
+            await db.execute("ALTER TABLE team ADD COLUMN draft_position INTEGER")
+            await db.commit()
+        except Exception:
+            pass
+
         league_row = await db.execute_fetchall("SELECT id, num_teams FROM league LIMIT 1")
         if not league_row:
             return {"picks_made": 0, "total": 0}
