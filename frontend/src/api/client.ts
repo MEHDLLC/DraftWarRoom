@@ -277,6 +277,25 @@ export const draftApi = {
   getSuggestions: () => fetchApi<DraftSuggestions>("/draft/suggestions"),
 
   refresh: () => fetchApi<DraftRefreshResult>("/draft/refresh", { method: "POST" }),
+
+  getLiveState: () => fetchApi<LiveDraftState>("/draft/live-state"),
+
+  getAvailable: (params?: { q?: string; position?: string; limit?: number }) =>
+    fetchApi<AvailablePlayer[]>("/draft/available", { params }),
+
+  markPicked: (playerId: number) =>
+    fetchApi<MarkPickedResult>("/draft/mark-picked", {
+      method: "POST",
+      body: { player_id: playerId },
+    }),
+
+  undoLast: () => fetchApi<{ status: string; undone: string }>("/draft/undo-last", { method: "DELETE" }),
+
+  setMyPosition: (position: number) =>
+    fetchApi<{ status: string; position: number }>("/draft/set-my-position", {
+      method: "POST",
+      body: { position },
+    }),
 };
 
 // ---------------------------------------------------------------------------
@@ -572,6 +591,55 @@ export interface DraftSuggestions {
 export interface DraftRefreshResult {
   status: string;
   new_picks: number;
-  total_picks: number;
-  free_agents_loaded: number;
+  players_loaded: number;
+  free_agents_fetched: number;
+}
+
+export interface AvailablePlayer {
+  id: number;
+  full_name: string;
+  position: string;
+  nfl_team: string;
+  projected_points: number;
+  headshot_url: string | null;
+}
+
+export interface MarkPickedResult {
+  status: string;
+  overall_pick: number;
+  round: number;
+  pick_in_round: number;
+  player_name: string;
+  position: string;
+  is_user_pick: boolean;
+}
+
+export interface LiveDraftRosterPlayer {
+  full_name: string;
+  position: string;
+  nfl_team: string;
+  projected_points: number;
+  round: number;
+  overall_pick: number;
+}
+
+export interface LiveDraftRecentPick {
+  full_name: string;
+  position: string;
+  overall_pick: number;
+  round: number;
+  is_user_pick: boolean;
+}
+
+export interface LiveDraftState {
+  picks_made: number;
+  total: number;
+  current_pick: number | null;
+  current_round: number | null;
+  is_user_turn: boolean;
+  user_next_pick: number | null;
+  user_draft_position: number | null;
+  is_complete: boolean;
+  user_roster: LiveDraftRosterPlayer[];
+  recent_picks: LiveDraftRecentPick[];
 }
