@@ -116,8 +116,13 @@ async def sync_league_data():
 
         # Sync matchups for current week and past weeks
         current_week = league_info["current_week"]
+        current_week_lineups = []
         for week in range(1, current_week + 1):
             matchups = get_matchups(league, week)
+            if week == current_week:
+                for m in matchups:
+                    current_week_lineups.extend(m.get("home_lineup") or [])
+                    current_week_lineups.extend(m.get("away_lineup") or [])
             for m in matchups:
                 # Get team DB ids
                 home_cursor = await db.execute(
@@ -159,6 +164,54 @@ async def sync_league_data():
                     m.get("home_projected"), m.get("away_projected"),
                     winner_id,
                 ))
+        await db.commit()
+
+        # Refresh single-week projections from this week's box scores.
+        # Zero first so last week's numbers don't linger for anyone missing
+        # from the new data (e.g. players on bye). Skipped entirely when the
+        # box-score fetch came back empty, so a transient ESPN failure
+        # doesn't wipe existing projections.
+        if current_week_lineups:
+            await db.execute("UPDATE player SET weekly_projection = 0")
+            for bp in current_week_lineups:
+                if bp.get("espn_id") is None:
+                    continue
+                await db.execute(
+                    "UPDATE player SET weekly_projection = ? WHERE espn_id = ?",
+                    (bp.get("projected_points") or 0, bp["espn_id"]),
+                )
+            await db.commit()
+
+        # Refresh the free-agent pool so waiver recommendations see current
+        # players, injuries, and this week's projections (not a draft-day
+        # snapshot). BoxPlayer weekly projections come back in
+        # weekly_projected_points; season totals only overwrite when present.
+        from ..adapters.espn_adapter import get_free_agents
+        fa_count = 0
+        for pos in ["QB", "RB", "WR", "TE", "K", "D/ST"]:
+            try:
+                for fa in get_free_agents(league, position=pos, limit=100):
+                    await db.execute("""
+                        INSERT INTO player (espn_id, full_name, position, nfl_team, status,
+                                            injury_status, projected_points, weekly_projection)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(espn_id) DO UPDATE SET
+                            full_name=excluded.full_name, position=excluded.position,
+                            nfl_team=excluded.nfl_team, status=excluded.status,
+                            injury_status=excluded.injury_status,
+                            projected_points=CASE WHEN excluded.projected_points > 0
+                                THEN excluded.projected_points ELSE player.projected_points END,
+                            weekly_projection=excluded.weekly_projection,
+                            updated_at=CURRENT_TIMESTAMP
+                    """, (
+                        fa["espn_id"], fa["full_name"], fa["position"],
+                        fa.get("nfl_team"), fa.get("status"),
+                        fa.get("injury_status"), fa.get("projected_points", 0),
+                        fa.get("weekly_projected_points", 0),
+                    ))
+                    fa_count += 1
+            except Exception as e:
+                print(f"Free agent sync failed for {pos}: {e}")
         await db.commit()
 
         # Sync draft

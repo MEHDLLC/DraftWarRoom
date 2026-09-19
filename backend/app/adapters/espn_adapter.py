@@ -13,7 +13,12 @@ from typing import Any
 from espn_api.football import League
 
 from ..config import get_settings
-from ..utils.constants import POSITION_SLOTS
+from ..utils.constants import (
+    POSITION_SLOTS,
+    normalize_injury_status,
+    normalize_nfl_team,
+    normalize_position,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -181,7 +186,11 @@ def get_rosters(league: League) -> dict[int, list[dict[str, Any]]]:
 
 def _player_to_dict(player: Any) -> dict[str, Any]:
     """Convert an espn_api Player object to a flat dict."""
-    # Season-long projected points (best for draft rankings)
+    # BoxPlayer objects (box scores, free_agents) carry a single-week
+    # projection in `projected_points`; full Player objects do not.
+    is_weekly_context = hasattr(player, "slot_position")
+
+    # Season-long projected points (best for draft rankings / ROS value)
     projected = 0.0
     try:
         # 1. Try the season-long total projection attribute (espn_api >= 0.30)
@@ -200,28 +209,38 @@ def _player_to_dict(player: Any) -> dict[str, Any]:
             season_stats = stats.get(0)
             if isinstance(season_stats, dict) and "projected_points" in season_stats:
                 projected = season_stats["projected_points"]
-            else:
-                # Fall back to max projected_points across all periods
+            elif not is_weekly_context:
+                # Fall back to max projected_points across all periods.
+                # Skipped for BoxPlayers, whose periods are single weeks.
                 for period_stats in stats.values():
                     if isinstance(period_stats, dict) and "projected_points" in period_stats:
                         val = period_stats["projected_points"]
                         if val > projected:
                             projected = val
 
-        # 4. Last resort: top-level attribute
-        if projected == 0.0:
+        # 4. Last resort: top-level attribute. Never for BoxPlayers — their
+        #    projected_points is a single-week number, not a season total.
+        if projected == 0.0 and not is_weekly_context:
             projected = getattr(player, "projected_points", 0.0) or 0.0
     except Exception:
-        projected = getattr(player, "projected_points", 0.0) or 0.0
+        projected = 0.0 if is_weekly_context else (getattr(player, "projected_points", 0.0) or 0.0)
+
+    weekly_projected = 0.0
+    if is_weekly_context:
+        try:
+            weekly_projected = getattr(player, "projected_points", 0.0) or 0.0
+        except Exception:
+            weekly_projected = 0.0
 
     return {
         "espn_id": player.playerId,
         "full_name": player.name,
-        "position": player.position,
-        "nfl_team": getattr(player, "proTeam", ""),
+        "position": normalize_position(player.position),
+        "nfl_team": normalize_nfl_team(getattr(player, "proTeam", "")),
         "slot": _resolve_slot(player),
         "projected_points": round(projected, 2),
-        "injury_status": getattr(player, "injuryStatus", "ACTIVE"),
+        "weekly_projected_points": round(weekly_projected, 2),
+        "injury_status": normalize_injury_status(getattr(player, "injuryStatus", "ACTIVE")),
         "injury_note": getattr(player, "injuryComment", None),
         "eligible_slots": [
             POSITION_SLOTS.get(s, str(s))
@@ -331,9 +350,10 @@ def _boxscore_player(player: Any) -> dict[str, Any]:
     return {
         "espn_id": getattr(player, "playerId", None),
         "name": getattr(player, "name", ""),
-        "position": getattr(player, "position", ""),
+        "position": normalize_position(getattr(player, "position", "")),
         "slot": _resolve_slot(player),
         "points": getattr(player, "points", 0.0),
+        # BoxPlayer projected_points is for this week only
         "projected_points": getattr(player, "projected_points", 0.0),
     }
 

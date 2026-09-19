@@ -22,9 +22,15 @@ def _run_async(coro_func):
 
 
 def start_scheduler():
-    """Start the background job scheduler."""
+    """Start the background job scheduler.
+
+    Note: cron hours below are in the server's local time, which is UTC in
+    the Docker/Railway deployment. ET kickoffs: Sun 1:00 PM ET = 17:00 UTC,
+    Thu 8:15 PM ET = 00:15 UTC Friday.
+    """
     from .sync_league import sync_league_data
     from .sync_players import sync_sleeper_data, sync_nflverse_stats, update_composite_scores
+    from .sync_schedule import sync_nfl_schedule
     from .notifications import check_lineup_guardrails, generate_weekly_recap, check_waiver_opportunities
 
     # League sync every 6 hours
@@ -48,6 +54,14 @@ def start_scheduler():
         _run_async(sync_nflverse_stats),
         CronTrigger(hour=5),
         id="nflverse_sync",
+        replace_existing=True,
+    )
+
+    # NFL schedule + points-allowed rankings daily at 5:30 AM
+    scheduler.add_job(
+        _run_async(sync_nfl_schedule),
+        CronTrigger(hour=5, minute=30),
+        id="nfl_schedule_sync",
         replace_existing=True,
     )
 
@@ -78,6 +92,34 @@ def start_scheduler():
         _run_async(check_lineup_guardrails),
         CronTrigger(day_of_week="sun", hour=9),
         id="sunday_lineup_check",
+        replace_existing=True,
+    )
+
+    # Pre-kickoff guardrails: fresh sync then check ~90 min before kickoff.
+    # Sunday 1 PM ET slate: sync 15:00 UTC, check 15:30 UTC.
+    scheduler.add_job(
+        _run_async(sync_league_data),
+        CronTrigger(day_of_week="sun", hour=15, minute=0),
+        id="sunday_pregame_sync",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        _run_async(check_lineup_guardrails),
+        CronTrigger(day_of_week="sun", hour=15, minute=30),
+        id="sunday_pregame_check",
+        replace_existing=True,
+    )
+    # Thursday Night Football (8:15 PM ET = 00:15 UTC): sync 22:15, check 22:45 UTC.
+    scheduler.add_job(
+        _run_async(sync_league_data),
+        CronTrigger(day_of_week="thu", hour=22, minute=15),
+        id="thursday_pregame_sync",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        _run_async(check_lineup_guardrails),
+        CronTrigger(day_of_week="thu", hour=22, minute=45),
+        id="thursday_pregame_check",
         replace_existing=True,
     )
 

@@ -39,6 +39,7 @@ class PlayerInfo(BaseModel):
     status: Optional[str] = None
     injury_status: Optional[str] = None
     projected_points: float = 0
+    weekly_projection: float = 0
     ros_projection: float = 0
     composite_score: float = 0
     trade_value: float = 0
@@ -73,11 +74,15 @@ class LineupRecommendation(BaseModel):
     player_id: int
     player_name: str
     position: str
+    nfl_team: Optional[str] = None
     recommended_slot: str
     composite_score: float
+    projected_points: float = 0  # this week's projection
     explanation: str
     boom_probability: float = 0
     bust_probability: float = 0
+    injury_status: Optional[str] = None
+    on_bye: bool = False
     matchup_grade: Optional[str] = None
 
 

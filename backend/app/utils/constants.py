@@ -43,3 +43,54 @@ SCHEDULE = {
 # ESPN API constants
 ESPN_BASE_URL = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl"
 ESPN_PLAYER_LIMIT = 1000
+
+# Injury statuses that make a player unplayable this week.
+# Includes both ESPN spellings ("INJURY_RESERVE") and ours ("INJURED_RESERVE").
+UNAVAILABLE_STATUSES = ("OUT", "INJURED_RESERVE", "INJURY_RESERVE", "SUSPENSION")
+
+# NFL team abbreviations: canonical form is ESPN's (player.nfl_team comes from
+# espn_api proTeam). nflverse and Sleeper use slightly different codes.
+_TEAM_TO_ESPN = {
+    "LA": "LAR",    # nflverse uses LA for the Rams
+    "WAS": "WSH",   # nflverse/Sleeper use WAS for Washington
+    "JAC": "JAX",
+    "OAK": "LV",
+    "SD": "LAC",
+    "STL": "LAR",
+}
+
+
+def normalize_nfl_team(team: str | None) -> str | None:
+    """Normalize an NFL team abbreviation to ESPN's canonical form."""
+    if not team:
+        return team
+    team = team.upper()
+    return _TEAM_TO_ESPN.get(team, team)
+
+
+def normalize_position(position: str | None) -> str | None:
+    """Normalize a position code (espn_api reports defenses as 'D/ST')."""
+    if not position:
+        return position
+    return "DST" if position in ("D/ST", "DEF") else position
+
+
+# Sleeper injury statuses ("Out", "IR", "Sus", ...) -> ESPN-style codes.
+_SLEEPER_INJURY_TO_ESPN = {
+    "QUESTIONABLE": "QUESTIONABLE",
+    "DOUBTFUL": "DOUBTFUL",
+    "OUT": "OUT",
+    "IR": "INJURED_RESERVE",
+    "PUP": "INJURED_RESERVE",
+    "SUS": "SUSPENSION",
+}
+
+
+def normalize_injury_status(status: str | None) -> str | None:
+    """Normalize a Sleeper/ESPN injury status to the app's canonical codes."""
+    if not status:
+        return None
+    upper = status.upper()
+    if upper == "INJURY_RESERVE":
+        return "INJURED_RESERVE"
+    return _SLEEPER_INJURY_TO_ESPN.get(upper, upper)

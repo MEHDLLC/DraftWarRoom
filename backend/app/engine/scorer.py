@@ -65,6 +65,8 @@ def injury_to_score(status: str | None) -> float:
         "DOUBTFUL": 25.0,
         "OUT": 0.0,
         "INJURED_RESERVE": 0.0,
+        "INJURY_RESERVE": 0.0,  # ESPN's spelling
+        "IR": 0.0,              # Sleeper's spelling
         "SUSPENSION": 0.0,
     }
     return mapping.get(status.upper(), 50.0)

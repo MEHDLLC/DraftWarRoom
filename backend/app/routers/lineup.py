@@ -33,9 +33,9 @@ async def get_lineup_recommendations():
         # Fallback: build advice from roster and composite scores
         rows = await db.execute_fetchall(
             """
-            SELECT p.id, p.full_name, p.position, p.composite_score,
-                   p.projected_points, p.boom_probability, p.bust_probability,
-                   re.slot
+            SELECT p.id, p.full_name, p.position, p.nfl_team, p.composite_score,
+                   p.weekly_projection, p.injury_status,
+                   p.boom_probability, p.bust_probability, re.slot
             FROM roster_entry re
             JOIN player p ON p.id = re.player_id
             WHERE re.team_id = ?
@@ -51,9 +51,12 @@ async def get_lineup_recommendations():
                 "player_id": r["id"],
                 "player_name": r["full_name"],
                 "position": r["position"],
+                "nfl_team": r["nfl_team"],
                 "recommended_slot": r["slot"],
                 "composite_score": r["composite_score"] or 0,
-                "explanation": f"Projected {r['projected_points'] or 0:.1f} pts",
+                "projected_points": r["weekly_projection"] or 0,
+                "injury_status": r["injury_status"],
+                "explanation": f"Projected {r['weekly_projection'] or 0:.1f} pts this week",
                 "boom_probability": r["boom_probability"] or 0,
                 "bust_probability": r["bust_probability"] or 0,
             }
@@ -107,7 +110,7 @@ async def get_optimal_lineup_comparison(week: int):
         # Try engine module
         try:
             from ..engine.optimal_lineup import get_optimal_lineup
-            result = await get_optimal_lineup(db, team_id, week)
+            result = await get_optimal_lineup(team_id, week)
             return result
         except ImportError:
             pass

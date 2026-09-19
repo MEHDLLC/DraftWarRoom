@@ -27,6 +27,17 @@ async def trigger_nflverse_sync():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/schedule")
+async def trigger_schedule_sync():
+    """Manually trigger NFL schedule + points-allowed sync."""
+    from ..jobs.sync_schedule import sync_nfl_schedule
+    try:
+        await sync_nfl_schedule()
+        return {"status": "ok", "message": "NFL schedule sync completed"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/scores")
 async def trigger_score_update():
     """Manually trigger composite score recalculation."""

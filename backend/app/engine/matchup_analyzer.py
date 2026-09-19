@@ -51,9 +51,10 @@ async def analyze_matchup(matchup_id: int) -> dict:
 
 
 async def _team_projection(db, team_id: int) -> dict:
-    """Calculate total projected score for a team's starters."""
+    """Calculate total projected score for a team's starters this week."""
     rows = await db.execute_fetchall("""
-        SELECT p.id, p.full_name, p.position, p.projected_points,
+        SELECT p.id, p.full_name, p.position,
+               p.weekly_projection as projected_points,
                p.composite_score, p.boom_probability, p.bust_probability,
                re.slot
         FROM roster_entry re

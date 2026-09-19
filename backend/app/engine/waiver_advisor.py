@@ -70,6 +70,7 @@ async def get_waiver_recommendations(team_id: int, limit: int = 20) -> list[dict
                     "nfl_team": fa.get("nfl_team"),
                     "composite_score": fa.get("composite_score", 0),
                     "projected_points": fa.get("projected_points", 0),
+                    "weekly_projection": fa.get("weekly_projection", 0),
                     "boom_probability": fa.get("boom_probability", 0),
                     "bust_probability": fa.get("bust_probability", 0),
                     "sleeper_trending_add": fa.get("sleeper_trending_add", 0),
