@@ -22,6 +22,12 @@ async def lifespan(app: FastAPI):
         from .jobs.scheduler import start_scheduler
         start_scheduler()
 
+        # Backfill missing/stale data in the background so advice is
+        # correct right after a deploy instead of at the next cron window
+        import asyncio
+        from .jobs.bootstrap import bootstrap_data
+        asyncio.create_task(bootstrap_data())
+
     yield
     # Shutdown
     if settings.app_env != "test":
