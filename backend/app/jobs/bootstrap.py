@@ -4,7 +4,22 @@ app gives correct advice right after a deploy or restart, instead of waiting
 for the next cron window. Each step is gated on a staleness check so a
 crash-looping container doesn't hammer external APIs.
 """
+import asyncio
+
 from ..database import get_db
+
+# Per-step ceiling so one hung upstream call can't stall the whole chain
+_STEP_TIMEOUT_S = 300
+
+
+async def _run_step(name: str, coro) -> None:
+    print(f"Bootstrap: starting {name}")
+    try:
+        await asyncio.wait_for(coro, timeout=_STEP_TIMEOUT_S)
+    except asyncio.TimeoutError:
+        print(f"Bootstrap {name} timed out after {_STEP_TIMEOUT_S}s")
+    except Exception as e:
+        print(f"Bootstrap {name} failed: {e}")
 
 
 async def bootstrap_data():
@@ -14,36 +29,18 @@ async def bootstrap_data():
     from .sync_players import sync_sleeper_data, sync_nflverse_stats, update_composite_scores
 
     needs = await _check_needs()
+    print(f"Bootstrap needs: {needs}")
 
     if needs["league"]:
-        try:
-            await sync_league_data()
-        except Exception as e:
-            print(f"Bootstrap league sync failed: {e}")
-
+        await _run_step("league sync", sync_league_data())
     if needs["schedule"]:
-        try:
-            await sync_nfl_schedule()
-        except Exception as e:
-            print(f"Bootstrap schedule sync failed: {e}")
-
+        await _run_step("schedule sync", sync_nfl_schedule())
     if needs["sleeper"]:
-        try:
-            await sync_sleeper_data()
-        except Exception as e:
-            print(f"Bootstrap sleeper sync failed: {e}")
-
+        await _run_step("sleeper sync", sync_sleeper_data())
     if needs["stats"]:
-        try:
-            await sync_nflverse_stats()
-        except Exception as e:
-            print(f"Bootstrap nflverse sync failed: {e}")
-
+        await _run_step("nflverse sync", sync_nflverse_stats())
     if any(needs.values()):
-        try:
-            await update_composite_scores()
-        except Exception as e:
-            print(f"Bootstrap composite score update failed: {e}")
+        await _run_step("composite scores", update_composite_scores())
 
     print(f"Bootstrap complete (ran: {[k for k, v in needs.items() if v] or 'nothing'})")
 

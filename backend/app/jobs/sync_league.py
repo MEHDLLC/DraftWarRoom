@@ -1,6 +1,7 @@
 """
 Sync league data from ESPN into local SQLite database.
 """
+import asyncio
 import json
 from ..database import get_db
 from ..config import get_settings
@@ -8,11 +9,15 @@ from ..utils.constants import POSITION_SLOTS
 
 
 async def sync_league_data():
-    """Full league sync: settings, teams, rosters, matchups, draft."""
+    """Full league sync: settings, teams, rosters, matchups, draft.
+
+    All espn_api calls make blocking HTTP requests, so they run in threads
+    to keep the event loop (and the API server) responsive.
+    """
     from ..adapters.espn_adapter import get_league, get_league_settings, get_teams, get_rosters, get_matchups, get_draft_results
 
     settings = get_settings()
-    league = get_league()
+    league = await asyncio.to_thread(get_league)
     league_info = get_league_settings(league)
     db = await get_db()
 
@@ -42,7 +47,7 @@ async def sync_league_data():
         league_id = league_row["id"]
 
         # Sync teams
-        teams = get_teams(league)
+        teams = await asyncio.to_thread(get_teams, league)
         for team in teams:
             await db.execute("""
                 INSERT INTO team (espn_team_id, league_id, owner_name, team_name, abbreviation,
@@ -64,7 +69,7 @@ async def sync_league_data():
         await db.commit()
 
         # Sync rosters
-        rosters = get_rosters(league)
+        rosters = await asyncio.to_thread(get_rosters, league)
         for espn_team_id, players in rosters.items():
             # Get team DB id
             cursor = await db.execute(
@@ -118,7 +123,7 @@ async def sync_league_data():
         current_week = league_info["current_week"]
         current_week_lineups = []
         for week in range(1, current_week + 1):
-            matchups = get_matchups(league, week)
+            matchups = await asyncio.to_thread(get_matchups, league, week)
             if week == current_week:
                 for m in matchups:
                     current_week_lineups.extend(m.get("home_lineup") or [])
@@ -190,7 +195,7 @@ async def sync_league_data():
         fa_count = 0
         for pos in ["QB", "RB", "WR", "TE", "K", "D/ST"]:
             try:
-                for fa in get_free_agents(league, position=pos, limit=100):
+                for fa in await asyncio.to_thread(get_free_agents, league, pos, 100):
                     await db.execute("""
                         INSERT INTO player (espn_id, full_name, position, nfl_team, status,
                                             injury_status, projected_points, weekly_projection)
@@ -216,7 +221,7 @@ async def sync_league_data():
 
         # Sync draft
         try:
-            draft_picks = get_draft_results(league)
+            draft_picks = await asyncio.to_thread(get_draft_results, league)
             for pick in draft_picks:
                 espn_player_id = pick.get("espn_player_id")
                 espn_team_id = pick.get("team_id")  # adapter uses "team_id" key
