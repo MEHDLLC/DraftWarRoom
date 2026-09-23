@@ -1,6 +1,9 @@
+import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useLeague } from "@/context/LeagueContext";
 import { useLineupAdvice } from "@/hooks/useLineup";
-import type { LineupRecommendation } from "@/api/client";
+import { lineupApi } from "@/api/client";
+import type { ApplyLineupResult, LineupRecommendation } from "@/api/client";
 import PlayerSlotCard from "@/components/lineup/PlayerSlotCard";
 import type { PlayerSlotData } from "@/components/lineup/PlayerSlotCard";
 import SwapSuggestion from "@/components/lineup/SwapSuggestion";
@@ -35,6 +38,7 @@ function toSlotData(player: LineupRecommendation): PlayerSlotData {
 
 export default function LineupPage() {
   const { isLoading: leagueLoading } = useLeague();
+  const queryClient = useQueryClient();
 
   const {
     data: advice,
@@ -43,6 +47,47 @@ export default function LineupPage() {
   } = useLineupAdvice();
 
   const isLoading = leagueLoading || adviceLoading;
+
+  // Apply-to-ESPN flow: preview -> confirm -> result
+  const [preview, setPreview] = useState<ApplyLineupResult | null>(null);
+  const [applyResult, setApplyResult] = useState<ApplyLineupResult | null>(null);
+  const [applyBusy, setApplyBusy] = useState(false);
+
+  async function handlePreview() {
+    setApplyBusy(true);
+    setApplyResult(null);
+    try {
+      setPreview(await lineupApi.applyLineup(false));
+    } catch {
+      setApplyResult({
+        moves: [], sent: false, dry_run: false, write_enabled: false,
+        message: "Could not build a preview. Is your team identified and the league synced?",
+      });
+    } finally {
+      setApplyBusy(false);
+    }
+  }
+
+  async function handleConfirm() {
+    setApplyBusy(true);
+    try {
+      const result = await lineupApi.applyLineup(true);
+      setApplyResult(result);
+      setPreview(null);
+      if (result.sent) {
+        // Roster changed on ESPN; refetch advice after the resync
+        setTimeout(() => queryClient.invalidateQueries({ queryKey: ["lineup"] }), 5000);
+      }
+    } catch {
+      setApplyResult({
+        moves: [], sent: false, dry_run: false, write_enabled: false,
+        message: "The apply request failed. Check the server logs.",
+      });
+      setPreview(null);
+    } finally {
+      setApplyBusy(false);
+    }
+  }
 
   const starters = advice?.starters ?? [];
   const bench = advice?.bench ?? [];
@@ -92,11 +137,91 @@ export default function LineupPage() {
           </p>
         </div>
         {advice && (
-          <span className="rounded-lg border border-surface-700 bg-surface-800 px-3 py-1.5 text-sm font-medium text-surface-100">
-            Week {advice.week}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="rounded-lg border border-surface-700 bg-surface-800 px-3 py-1.5 text-sm font-medium text-surface-100">
+              Week {advice.week}
+            </span>
+            <button
+              onClick={handlePreview}
+              disabled={applyBusy}
+              className="rounded-lg bg-primary-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-primary-500 disabled:opacity-50"
+            >
+              {applyBusy ? "Working..." : "Apply to ESPN"}
+            </button>
+          </div>
         )}
       </div>
+
+      {/* Apply result banner */}
+      {applyResult && (
+        <div
+          className={`card border ${
+            applyResult.sent
+              ? "border-success-400/40 bg-success-400/10"
+              : "border-accent-400/40 bg-accent-400/10"
+          }`}
+        >
+          <p className="text-sm text-surface-100">{applyResult.message}</p>
+        </div>
+      )}
+
+      {/* Apply confirmation dialog */}
+      {preview && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="card w-full max-w-md space-y-4">
+            <h2 className="text-lg font-semibold text-surface-50">
+              Apply recommended lineup?
+            </h2>
+            {preview.moves.length === 0 ? (
+              <p className="text-sm text-surface-300">{preview.message}</p>
+            ) : (
+              <>
+                <ul className="space-y-1 text-sm text-surface-200">
+                  {preview.moves.map((m, i) => (
+                    <li key={i} className="flex justify-between">
+                      <span>
+                        {m.player_name}{" "}
+                        <span className="text-surface-500">({m.position})</span>
+                      </span>
+                      <span className="tabular-nums">
+                        {m.from_slot} → {m.to_slot}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                {!preview.write_enabled && (
+                  <p className="text-xs text-accent-400">
+                    Writes are currently disabled (dry-run mode): confirming
+                    logs the exact ESPN request for validation without sending
+                    it. Set ESPN_WRITE_ENABLED=true to go live.
+                  </p>
+                )}
+              </>
+            )}
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setPreview(null)}
+                className="rounded-lg border border-surface-600 px-3 py-1.5 text-sm text-surface-300 hover:bg-surface-800"
+              >
+                Cancel
+              </button>
+              {preview.moves.length > 0 && (
+                <button
+                  onClick={handleConfirm}
+                  disabled={applyBusy}
+                  className="rounded-lg bg-primary-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-primary-500 disabled:opacity-50"
+                >
+                  {applyBusy
+                    ? "Working..."
+                    : preview.write_enabled
+                      ? "Apply to ESPN"
+                      : "Run dry run"}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Loading State */}
       {isLoading && (

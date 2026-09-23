@@ -15,9 +15,11 @@ from espn_api.football import League
 from ..config import get_settings
 from ..utils.constants import (
     POSITION_SLOTS,
+    SLOT_ALIASES,
     normalize_injury_status,
     normalize_nfl_team,
     normalize_position,
+    normalize_slot,
 )
 
 logger = logging.getLogger(__name__)
@@ -97,15 +99,6 @@ def _resolve_scoring_type(settings_obj: Any) -> str:
     return "UNKNOWN"
 
 
-# espn_api slot labels -> the app's canonical slot names
-_SLOT_NAME_MAP = {
-    "D/ST": "DST",
-    "RB/WR/TE": "FLEX",
-    "RB/WR": "FLEX",
-    "WR/TE": "FLEX",
-}
-
-
 def _extract_roster_slots(settings_obj: Any) -> dict[str, int]:
     """Return a mapping of slot name -> count from the league settings.
 
@@ -120,7 +113,7 @@ def _extract_roster_slots(settings_obj: Any) -> dict[str, int]:
             for name, count in raw.items():
                 if not count:
                     continue
-                canonical = _SLOT_NAME_MAP.get(name, name)
+                canonical = SLOT_ALIASES.get(name, name)
                 slot_counts[canonical] = slot_counts.get(canonical, 0) + int(count)
             return slot_counts
 
@@ -279,10 +272,15 @@ def _player_to_dict(player: Any) -> dict[str, Any]:
 
 
 def _resolve_slot(player: Any) -> str:
-    """Determine the current roster slot name for a player."""
+    """Determine the current roster slot name for a player.
+
+    espn_api exposes ``lineupSlot`` as a label string (e.g. 'RB/WR/TE',
+    'D/ST'); older versions used numeric ids. Both are normalized to the
+    app's canonical slot names.
+    """
     slot_id = getattr(player, "lineupSlot", None)
     if slot_id is not None:
-        return POSITION_SLOTS.get(slot_id, str(slot_id))
+        return normalize_slot(POSITION_SLOTS.get(slot_id, str(slot_id)))
     return "BE"
 
 

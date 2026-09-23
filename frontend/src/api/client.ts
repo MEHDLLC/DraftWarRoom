@@ -185,6 +185,12 @@ export const lineupApi = {
 
   getOptimal: (week?: number) =>
     fetchApi<OptimalLineup>("/lineup/optimal", { params: { week } }),
+
+  applyLineup: (confirm: boolean) =>
+    fetchApi<ApplyLineupResult>("/lineup/apply", {
+      method: "POST",
+      body: { confirm },
+    }),
 };
 
 // ---------------------------------------------------------------------------
@@ -438,6 +444,22 @@ export interface LineupSwap {
   starter_player: string;
   starter_score: number;
   reason: string;
+}
+
+export interface LineupMove {
+  player_name: string;
+  position: string;
+  from_slot: string;
+  to_slot: string;
+}
+
+export interface ApplyLineupResult {
+  moves: LineupMove[];
+  sent: boolean;
+  dry_run: boolean;
+  write_enabled: boolean;
+  message: string;
+  espn_status?: number;
 }
 
 export interface OptimalLineup {
