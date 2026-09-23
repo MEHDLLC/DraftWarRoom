@@ -53,13 +53,19 @@ async def _check_needs() -> dict[str, bool]:
     needs = {"league": False, "schedule": False, "sleeper": False, "stats": False}
     db = await get_db()
     try:
-        # League data missing, or last synced over an hour ago
+        # League data missing, last synced over an hour ago, or synced
+        # without a usable roster slot config
         rows = await db.execute_fetchall("""
-            SELECT (julianday('now') - julianday(updated_at)) * 24 AS hours_old
+            SELECT (julianday('now') - julianday(updated_at)) * 24 AS hours_old,
+                   roster_slots
             FROM league LIMIT 1
         """)
         hours_old = rows[0]["hours_old"] if rows else None
-        needs["league"] = hours_old is None or hours_old > 1
+        slots = rows[0]["roster_slots"] if rows else None
+        needs["league"] = (
+            hours_old is None or hours_old > 1
+            or not slots or slots == "{}"
+        )
 
         rows = await db.execute_fetchall("SELECT COUNT(*) AS c FROM nfl_team_schedule")
         needs["schedule"] = rows[0]["c"] == 0

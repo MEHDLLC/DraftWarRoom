@@ -199,11 +199,11 @@ async def update_composite_scores():
         )
         stats_season = (stats_season_row[0]["s"] if stats_season_row else None) or season
 
-        # Collect all values for percentile calculations
-        all_ros = []
-        all_usage = []
-        all_matchup = []
-        all_community = []
+        # Collect values for percentile calculations PER POSITION: pooling
+        # everyone together lets QBs (highest raw projections and snap
+        # counts) blanket the top of the scale, drowning out every other
+        # position in rankings and waiver recommendations.
+        pools: dict[str, dict[str, list]] = {}
 
         player_data = []
         for p in players:
@@ -240,10 +240,13 @@ async def update_composite_scores():
 
             boom, bust = calculate_boom_bust(weekly_points)
 
-            all_ros.append(ros)
-            all_usage.append(usage)
-            all_matchup.append(matchup)
-            all_community.append(community)
+            pool = pools.setdefault(
+                p["position"], {"ros": [], "usage": [], "matchup": [], "community": []}
+            )
+            pool["ros"].append(ros)
+            pool["usage"].append(usage)
+            pool["matchup"].append(matchup)
+            pool["community"].append(community)
 
             player_data.append({
                 "id": p["id"],
@@ -258,14 +261,15 @@ async def update_composite_scores():
                 "bust": bust,
             })
 
-        # Calculate composite scores
+        # Calculate composite scores (relative to same-position players)
         for pd in player_data:
+            pool = pools[pd["position"]]
             score, breakdown = compute_composite_score(
-                pd["ros"], all_ros,
-                pd["usage"], all_usage,
-                pd["matchup"], all_matchup,
+                pd["ros"], pool["ros"],
+                pd["usage"], pool["usage"],
+                pd["matchup"], pool["matchup"],
                 pd["injury"],
-                pd["community"], all_community,
+                pd["community"], pool["community"],
             )
 
             # Trade value = composite score normalized to 0-100

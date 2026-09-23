@@ -97,15 +97,41 @@ def _resolve_scoring_type(settings_obj: Any) -> str:
     return "UNKNOWN"
 
 
+# espn_api slot labels -> the app's canonical slot names
+_SLOT_NAME_MAP = {
+    "D/ST": "DST",
+    "RB/WR/TE": "FLEX",
+    "RB/WR": "FLEX",
+    "WR/TE": "FLEX",
+}
+
+
 def _extract_roster_slots(settings_obj: Any) -> dict[str, int]:
-    """Return a mapping of slot name -> count from the league settings."""
+    """Return a mapping of slot name -> count from the league settings.
+
+    espn_api exposes this as ``position_slot_counts`` (label -> count);
+    older code looked for a ``roster_slots`` attribute (id -> count) that
+    does not exist in current versions, which stored an empty config.
+    """
     try:
         slot_counts: dict[str, int] = {}
+        raw = getattr(settings_obj, "position_slot_counts", None)
+        if isinstance(raw, dict) and raw:
+            for name, count in raw.items():
+                if not count:
+                    continue
+                canonical = _SLOT_NAME_MAP.get(name, name)
+                slot_counts[canonical] = slot_counts.get(canonical, 0) + int(count)
+            return slot_counts
+
+        # Fallback for versions exposing id-keyed roster_slots
         roster_slots = getattr(settings_obj, "roster_slots", None) or {}
         if isinstance(roster_slots, dict):
             for slot_id, count in roster_slots.items():
+                if not count:
+                    continue
                 name = POSITION_SLOTS.get(int(slot_id), f"SLOT_{slot_id}")
-                slot_counts[name] = count
+                slot_counts[name] = int(count)
         return slot_counts
     except Exception:
         return {}

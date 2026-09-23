@@ -128,3 +128,22 @@ async def test_no_schedule_data_benches_nobody(test_db):
     # Weekly projection is surfaced, not the season total
     rb = next(s for s in advice["starters"] if s["player_name"] == "RB A")
     assert rb["projected_points"] == 15
+
+
+@pytest.mark.asyncio
+async def test_empty_slot_config_falls_back_to_default(test_db):
+    """A league synced with roster_slots='{}' must not bench everyone."""
+    await _seed(2, [
+        {"name": "RB A", "position": "RB", "team": "DET", "score": 80, "weekly": 15},
+        {"name": "QB A", "position": "QB", "team": "BUF", "score": 70, "weekly": 17},
+    ], schedule_teams=[])
+    db = await get_db()
+    try:
+        await db.execute("UPDATE league SET roster_slots = '{}'")
+        await db.commit()
+    finally:
+        await db.close()
+
+    advice = await get_lineup_advice(1, 2)
+    starter_names = {s["player_name"] for s in advice["starters"]}
+    assert {"RB A", "QB A"} <= starter_names

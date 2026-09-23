@@ -45,11 +45,13 @@ async def get_lineup_advice(team_id: int, week: int) -> dict:
                 p.get("injury_status") in UNAVAILABLE_STATUSES or p["on_bye"]
             )
 
-        # Get league roster slot config
+        # Get league roster slot config; an empty/unsynced config falls back
+        # to the standard lineup rather than benching the whole roster
+        slot_config = {}
         league_row = await db.execute_fetchall("SELECT roster_slots FROM league LIMIT 1")
         if league_row and league_row[0]["roster_slots"]:
             slot_config = json.loads(league_row[0]["roster_slots"])
-        else:
+        if not slot_config:
             slot_config = {"QB": 1, "RB": 2, "WR": 2, "TE": 1, "FLEX": 1, "K": 1, "DST": 1}
 
         # Separate by position (only players able to play this week)
