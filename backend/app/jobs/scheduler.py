@@ -1,24 +1,15 @@
 """
 APScheduler configuration for background jobs.
+
+Jobs are passed as coroutine functions directly: AsyncIOScheduler runs them
+on the event loop via its AsyncIOExecutor. (A previous sync wrapper called
+asyncio.get_event_loop() from a worker thread, which raises RuntimeError
+under uvloop — every job silently crashed.)
 """
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-import asyncio
 
 scheduler = AsyncIOScheduler()
-
-
-def _run_async(coro_func):
-    """Wrapper to run async functions from sync scheduler callbacks."""
-    async def wrapper():
-        await coro_func()
-    def sync_wrapper():
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            asyncio.ensure_future(wrapper())
-        else:
-            loop.run_until_complete(wrapper())
-    return sync_wrapper
 
 
 def start_scheduler():
@@ -35,7 +26,7 @@ def start_scheduler():
 
     # League sync every 6 hours
     scheduler.add_job(
-        _run_async(sync_league_data),
+        sync_league_data,
         CronTrigger(hour="*/6"),
         id="league_sync",
         replace_existing=True,
@@ -43,7 +34,7 @@ def start_scheduler():
 
     # Sleeper trending data every 4 hours
     scheduler.add_job(
-        _run_async(sync_sleeper_data),
+        sync_sleeper_data,
         CronTrigger(hour="*/4"),
         id="sleeper_sync",
         replace_existing=True,
@@ -51,7 +42,7 @@ def start_scheduler():
 
     # nflverse stats daily at 5 AM
     scheduler.add_job(
-        _run_async(sync_nflverse_stats),
+        sync_nflverse_stats,
         CronTrigger(hour=5),
         id="nflverse_sync",
         replace_existing=True,
@@ -59,7 +50,7 @@ def start_scheduler():
 
     # NFL schedule + points-allowed rankings daily at 5:30 AM
     scheduler.add_job(
-        _run_async(sync_nfl_schedule),
+        sync_nfl_schedule,
         CronTrigger(hour=5, minute=30),
         id="nfl_schedule_sync",
         replace_existing=True,
@@ -67,7 +58,7 @@ def start_scheduler():
 
     # Composite score recalculation after syncs
     scheduler.add_job(
-        _run_async(update_composite_scores),
+        update_composite_scores,
         CronTrigger(hour="1,7,13,19"),
         id="composite_scores",
         replace_existing=True,
@@ -75,7 +66,7 @@ def start_scheduler():
 
     # Sunday hourly updates during game windows
     scheduler.add_job(
-        _run_async(sync_league_data),
+        sync_league_data,
         CronTrigger(day_of_week="sun", hour="10-23"),
         id="sunday_sync",
         replace_existing=True,
@@ -83,13 +74,13 @@ def start_scheduler():
 
     # Lineup guardrails - Thursday and Sunday morning
     scheduler.add_job(
-        _run_async(check_lineup_guardrails),
+        check_lineup_guardrails,
         CronTrigger(day_of_week="thu", hour=10),
         id="thursday_lineup_check",
         replace_existing=True,
     )
     scheduler.add_job(
-        _run_async(check_lineup_guardrails),
+        check_lineup_guardrails,
         CronTrigger(day_of_week="sun", hour=9),
         id="sunday_lineup_check",
         replace_existing=True,
@@ -98,26 +89,26 @@ def start_scheduler():
     # Pre-kickoff guardrails: fresh sync then check ~90 min before kickoff.
     # Sunday 1 PM ET slate: sync 15:00 UTC, check 15:30 UTC.
     scheduler.add_job(
-        _run_async(sync_league_data),
+        sync_league_data,
         CronTrigger(day_of_week="sun", hour=15, minute=0),
         id="sunday_pregame_sync",
         replace_existing=True,
     )
     scheduler.add_job(
-        _run_async(check_lineup_guardrails),
+        check_lineup_guardrails,
         CronTrigger(day_of_week="sun", hour=15, minute=30),
         id="sunday_pregame_check",
         replace_existing=True,
     )
     # Thursday Night Football (8:15 PM ET = 00:15 UTC): sync 22:15, check 22:45 UTC.
     scheduler.add_job(
-        _run_async(sync_league_data),
+        sync_league_data,
         CronTrigger(day_of_week="thu", hour=22, minute=15),
         id="thursday_pregame_sync",
         replace_existing=True,
     )
     scheduler.add_job(
-        _run_async(check_lineup_guardrails),
+        check_lineup_guardrails,
         CronTrigger(day_of_week="thu", hour=22, minute=45),
         id="thursday_pregame_check",
         replace_existing=True,
@@ -125,7 +116,7 @@ def start_scheduler():
 
     # Monday morning recap
     scheduler.add_job(
-        _run_async(generate_weekly_recap),
+        generate_weekly_recap,
         CronTrigger(day_of_week="mon", hour=8),
         id="monday_recap",
         replace_existing=True,
@@ -133,7 +124,7 @@ def start_scheduler():
 
     # Tuesday waiver wire tips
     scheduler.add_job(
-        _run_async(check_waiver_opportunities),
+        check_waiver_opportunities,
         CronTrigger(day_of_week="tue", hour=6),
         id="tuesday_waivers",
         replace_existing=True,

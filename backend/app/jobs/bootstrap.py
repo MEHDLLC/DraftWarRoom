@@ -44,6 +44,9 @@ async def bootstrap_data():
 
     print(f"Bootstrap complete (ran: {[k for k, v in needs.items() if v] or 'nothing'})")
 
+    from .report import print_team_report
+    await _run_step("team report", print_team_report())
+
 
 async def _check_needs() -> dict[str, bool]:
     """Decide which syncs are worth running at startup."""
@@ -55,7 +58,8 @@ async def _check_needs() -> dict[str, bool]:
             SELECT (julianday('now') - julianday(updated_at)) * 24 AS hours_old
             FROM league LIMIT 1
         """)
-        needs["league"] = not rows or rows[0]["hours_old"] is None or rows[0]["hours_old"] > 1
+        hours_old = rows[0]["hours_old"] if rows else None
+        needs["league"] = hours_old is None or hours_old > 1
 
         rows = await db.execute_fetchall("SELECT COUNT(*) AS c FROM nfl_team_schedule")
         needs["schedule"] = rows[0]["c"] == 0
@@ -67,6 +71,11 @@ async def _check_needs() -> dict[str, bool]:
 
         rows = await db.execute_fetchall("SELECT COUNT(*) AS c FROM player_weekly_stat")
         needs["stats"] = rows[0]["c"] == 0
+
+        # Everything is stale after half a day (e.g. the scheduler was down):
+        # refresh it all, not just the league
+        if hours_old is None or hours_old > 12:
+            needs = {k: True for k in needs}
     except Exception as e:
         print(f"Bootstrap check failed: {e}")
     finally:
