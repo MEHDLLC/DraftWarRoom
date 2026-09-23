@@ -17,7 +17,13 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+# Current asset naming (2025+); the release also hosts pre-2025 seasons
+# under the legacy player_stats tag, which we fall back to.
 _WEEKLY_STATS_URL = (
+    "https://github.com/nflverse/nflverse-data/releases/download/"
+    "stats_player/stats_player_week_{season}.csv"
+)
+_WEEKLY_STATS_LEGACY_URL = (
     "https://github.com/nflverse/nflverse-data/releases/download/"
     "player_stats/player_stats_{season}.csv"
 )
@@ -25,12 +31,19 @@ _SNAP_COUNTS_URL = (
     "https://github.com/nflverse/nflverse-data/releases/download/"
     "snap_counts/snap_counts_{season}.csv"
 )
+# Full NFL schedule, all seasons in one file (game_id, season, week,
+# home_team, away_team, ...)
+_SCHEDULES_URL = (
+    "https://github.com/nflverse/nflverse-data/releases/download/"
+    "schedules/games.csv"
+)
 
 _HTTP_TIMEOUT = 60.0  # generous timeout for large CSV downloads
 
 # In-memory caches keyed by season.
 _weekly_stats_cache: dict[int, pd.DataFrame] = {}
 _snap_counts_cache: dict[int, pd.DataFrame] = {}
+_schedules_cache: dict[int, pd.DataFrame] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -47,11 +60,14 @@ def get_weekly_stats(season: int) -> pd.DataFrame:
     if season in _weekly_stats_cache:
         return _weekly_stats_cache[season]
 
-    url = _WEEKLY_STATS_URL.format(season=season)
-    df = _download_csv(url, label=f"weekly_stats_{season}")
-    if df is not None:
-        _weekly_stats_cache[season] = df
-        return df
+    for url in (
+        _WEEKLY_STATS_URL.format(season=season),
+        _WEEKLY_STATS_LEGACY_URL.format(season=season),
+    ):
+        df = _download_csv(url, label=f"weekly_stats_{season}")
+        if df is not None and not df.empty:
+            _weekly_stats_cache[season] = df
+            return df
     return pd.DataFrame()
 
 
@@ -74,6 +90,28 @@ def get_snap_counts(season: int) -> pd.DataFrame:
     if df is not None:
         _snap_counts_cache[season] = df
         return df
+    return pd.DataFrame()
+
+
+# ---------------------------------------------------------------------------
+# Season schedule
+# ---------------------------------------------------------------------------
+
+def get_schedules(season: int) -> pd.DataFrame:
+    """Download the NFL schedule and return regular-season games for *season*.
+
+    Returns a :class:`pandas.DataFrame` with one row per game (columns
+    include ``week``, ``home_team``, ``away_team``).  Cached in memory.
+    Returns an empty ``DataFrame`` on failure.
+    """
+    if season in _schedules_cache:
+        return _schedules_cache[season]
+
+    df = _download_csv(_SCHEDULES_URL, label="schedules")
+    if df is not None and not df.empty:
+        season_df = df[(df["season"] == season) & (df["game_type"] == "REG")].copy()
+        _schedules_cache[season] = season_df
+        return season_df
     return pd.DataFrame()
 
 

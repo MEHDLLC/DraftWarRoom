@@ -31,11 +31,12 @@ async def get_optimal_lineup(team_id: int, week: int) -> dict:
 
         players = [dict(r) for r in rows]
 
-        # Get slot configuration
+        # Get slot configuration; empty config falls back to standard lineup
+        slot_config = {}
         league_row = await db.execute_fetchall("SELECT roster_slots FROM league LIMIT 1")
         if league_row and league_row[0]["roster_slots"]:
             slot_config = json.loads(league_row[0]["roster_slots"])
-        else:
+        if not slot_config:
             slot_config = {"QB": 1, "RB": 2, "WR": 2, "TE": 1, "FLEX": 1, "K": 1, "DST": 1}
 
         # Calculate actual points (starters only)

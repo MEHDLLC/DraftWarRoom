@@ -46,7 +46,8 @@ async def check_lineup_guardrails():
             FROM roster_entry re
             JOIN player p ON p.id = re.player_id
             WHERE re.team_id = ? AND re.slot NOT IN ('BE', 'IR')
-            AND p.injury_status IN ('OUT', 'DOUBTFUL', 'INJURED_RESERVE')
+            AND p.injury_status IN ('OUT', 'DOUBTFUL', 'INJURED_RESERVE',
+                                    'INJURY_RESERVE', 'SUSPENSION')
         """, (team_id,))
 
         for player in injured_starters:
@@ -57,6 +58,32 @@ async def check_lineup_guardrails():
                 priority="urgent",
                 data={"player_name": player["full_name"], "position": player["position"]},
             )
+
+        # Check for starters on bye (only when schedule data is loaded:
+        # teams with no game in a week that has games are on bye)
+        league_row = await db.execute_fetchall("SELECT current_week FROM league LIMIT 1")
+        current_week = league_row[0]["current_week"] if league_row else None
+        if current_week:
+            bye_starters = await db.execute_fetchall("""
+                SELECT p.full_name, p.position, p.nfl_team, re.slot
+                FROM roster_entry re
+                JOIN player p ON p.id = re.player_id
+                WHERE re.team_id = ? AND re.slot NOT IN ('BE', 'IR')
+                AND p.nfl_team IS NOT NULL
+                AND EXISTS (SELECT 1 FROM nfl_team_schedule WHERE week = ?)
+                AND p.nfl_team NOT IN (
+                    SELECT nfl_team FROM nfl_team_schedule WHERE week = ?
+                )
+            """, (team_id, current_week, current_week))
+
+            for player in bye_starters:
+                await create_notification(
+                    title=f"Bye Week Alert: {player['full_name']}",
+                    body=f"{player['full_name']} ({player['position']}, {player['nfl_team']}) is on bye this week but still in your starting lineup at {player['slot']}. Swap in an active player!",
+                    type="LINEUP_ALERT",
+                    priority="urgent",
+                    data={"player_name": player["full_name"], "position": player["position"]},
+                )
 
         # Check for questionable starters (lower priority)
         questionable_starters = await db.execute_fetchall("""

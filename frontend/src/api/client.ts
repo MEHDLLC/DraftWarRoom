@@ -411,17 +411,33 @@ export interface WeeklyStat {
 
 export interface LineupAdvice {
   week: number;
-  suggestions: LineupSuggestion[];
-  reasoning: string;
+  starters: LineupRecommendation[];
+  bench: LineupRecommendation[];
+  swap_suggestions: LineupSwap[];
 }
 
-export interface LineupSuggestion {
-  action: "start" | "bench" | "flex";
-  playerId: string;
-  playerName: string;
+export interface LineupRecommendation {
+  player_id: number;
+  player_name: string;
   position: string;
+  nfl_team?: string | null;
+  recommended_slot: string;
+  composite_score: number;
+  projected_points: number;
+  explanation: string;
+  boom_probability: number;
+  bust_probability: number;
+  injury_status?: string | null;
+  on_bye: boolean;
+  matchup_grade?: string | null;
+}
+
+export interface LineupSwap {
+  bench_player: string;
+  bench_score: number;
+  starter_player: string;
+  starter_score: number;
   reason: string;
-  confidence: number;
 }
 
 export interface OptimalLineup {

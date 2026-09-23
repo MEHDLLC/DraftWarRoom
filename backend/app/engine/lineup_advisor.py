@@ -1,10 +1,12 @@
 """
 Lineup advisor: recommends optimal start/sit decisions for each roster slot.
 Uses composite scores to rank players and optimize FLEX selection.
+Players who cannot play this week (OUT, IR, suspended, or on bye) are never
+recommended as starters, regardless of score.
 """
 import json
 from ..database import get_db
-from ..utils.constants import FLEX_ELIGIBLE
+from ..utils.constants import FLEX_ELIGIBLE, UNAVAILABLE_STATUSES
 
 
 async def get_lineup_advice(team_id: int, week: int) -> dict:
@@ -17,8 +19,8 @@ async def get_lineup_advice(team_id: int, week: int) -> dict:
         # Get roster with player scores
         rows = await db.execute_fetchall("""
             SELECT p.id, p.full_name, p.position, p.nfl_team, p.composite_score,
-                   p.projected_points, p.boom_probability, p.bust_probability,
-                   p.injury_status, p.status, re.slot
+                   p.projected_points, p.weekly_projection, p.boom_probability,
+                   p.bust_probability, p.injury_status, p.status, re.slot
             FROM roster_entry re
             JOIN player p ON p.id = re.player_id
             WHERE re.team_id = ?
@@ -30,16 +32,33 @@ async def get_lineup_advice(team_id: int, week: int) -> dict:
 
         players = [dict(r) for r in rows]
 
-        # Get league roster slot config
+        # Teams on bye this week: if we have schedule rows for this week,
+        # any team without a game is on bye. No schedule data -> assume
+        # everyone plays rather than benching the whole roster.
+        sched_rows = await db.execute_fetchall(
+            "SELECT nfl_team FROM nfl_team_schedule WHERE week = ?", (week,)
+        )
+        teams_playing = {r["nfl_team"] for r in sched_rows}
+        for p in players:
+            p["on_bye"] = bool(teams_playing) and p.get("nfl_team") not in teams_playing
+            p["unavailable"] = (
+                p.get("injury_status") in UNAVAILABLE_STATUSES or p["on_bye"]
+            )
+
+        # Get league roster slot config; an empty/unsynced config falls back
+        # to the standard lineup rather than benching the whole roster
+        slot_config = {}
         league_row = await db.execute_fetchall("SELECT roster_slots FROM league LIMIT 1")
         if league_row and league_row[0]["roster_slots"]:
             slot_config = json.loads(league_row[0]["roster_slots"])
-        else:
+        if not slot_config:
             slot_config = {"QB": 1, "RB": 2, "WR": 2, "TE": 1, "FLEX": 1, "K": 1, "DST": 1}
 
-        # Separate by position
+        # Separate by position (only players able to play this week)
         by_pos = {}
         for p in players:
+            if p["unavailable"]:
+                continue
             pos = p["position"]
             by_pos.setdefault(pos, []).append(p)
 
@@ -99,10 +118,12 @@ def _make_recommendation(player: dict, slot: str) -> dict:
         "nfl_team": player.get("nfl_team"),
         "recommended_slot": slot,
         "composite_score": score,
-        "projected_points": player.get("projected_points", 0),
+        # Single-week projection; season total lives in ros_projection contexts
+        "projected_points": player.get("weekly_projection") or 0,
         "boom_probability": player.get("boom_probability", 0),
         "bust_probability": player.get("bust_probability", 0),
         "injury_status": player.get("injury_status"),
+        "on_bye": player.get("on_bye", False),
         "explanation": _generate_start_sit_reason(player, slot),
         "matchup_grade": _score_to_grade(score),
     }
@@ -114,6 +135,10 @@ def _generate_start_sit_reason(player: dict, slot: str) -> str:
     injury = player.get("injury_status")
 
     if slot == "BE":
+        if player.get("on_bye"):
+            return f"{name} is on bye this week — do not start."
+        if injury in UNAVAILABLE_STATUSES:
+            return f"{name} is {injury} and cannot play this week."
         if injury and injury not in ("ACTIVE", "NORMAL"):
             return f"{name} is {injury} — keep on bench until status clears."
         return f"{name} is behind your starters at {player['position']} this week."
@@ -132,6 +157,9 @@ def _find_swaps(starters: list[dict], bench: list[dict]) -> list[dict]:
     """Find cases where a bench player should start over a starter."""
     swaps = []
     for bench_p in bench:
+        # Never suggest starting someone who can't play
+        if bench_p.get("on_bye") or bench_p.get("injury_status") in UNAVAILABLE_STATUSES:
+            continue
         for starter in starters:
             # Same position or both FLEX-eligible for a FLEX slot
             same_pos = bench_p["position"] == starter["position"]

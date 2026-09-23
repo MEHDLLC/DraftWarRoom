@@ -21,7 +21,7 @@ async def get_waiver_recommendations_endpoint(
         # Try engine module
         try:
             from ..engine.waiver_advisor import get_waiver_recommendations
-            recs = await get_waiver_recommendations(db, team_id, limit)
+            recs = await get_waiver_recommendations(team_id, limit)
             return recs
         except ImportError:
             pass
@@ -64,6 +64,7 @@ async def get_waiver_recommendations_endpoint(
                 status=r["status"],
                 injury_status=r["injury_status"],
                 projected_points=r["projected_points"] or 0,
+                weekly_projection=r["weekly_projection"] or 0,
                 ros_projection=r["ros_projection"] or 0,
                 composite_score=r["composite_score"] or 0,
                 trade_value=r["trade_value"] or 0,
@@ -89,6 +90,7 @@ async def get_waiver_recommendations_endpoint(
                             status=bp["status"],
                             injury_status=bp["injury_status"],
                             projected_points=bp["projected_points"] or 0,
+                            weekly_projection=bp["weekly_projection"] or 0,
                             ros_projection=bp["ros_projection"] or 0,
                             composite_score=bp["composite_score"] or 0,
                             trade_value=bp["trade_value"] or 0,
@@ -114,8 +116,8 @@ async def get_waiver_recommendations_endpoint(
                     composite_score=r["composite_score"] or 0,
                     explanation=(
                         f"{r['full_name']} ({r['position']}, {r['nfl_team'] or 'FA'}) "
-                        f"projects {r['projected_points'] or 0:.1f} pts this week "
-                        f"with a ROS projection of {r['ros_projection'] or 0:.1f}.{trending_note}"
+                        f"projects {r['weekly_projection'] or 0:.1f} pts this week "
+                        f"with a season projection of {r['projected_points'] or 0:.1f}.{trending_note}"
                     ),
                     suggested_drop=suggested_drop,
                     drop_explanation=drop_explanation,
