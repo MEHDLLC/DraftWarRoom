@@ -5,6 +5,7 @@ from ..schemas.models import NotificationInfo
 router = APIRouter()
 
 
+@router.get("", response_model=list[NotificationInfo], include_in_schema=False)
 @router.get("/", response_model=list[NotificationInfo])
 async def get_notifications(
     unread_only: bool = Query(False, description="Only return unread notifications"),

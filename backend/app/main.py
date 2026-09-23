@@ -7,7 +7,7 @@ from pathlib import Path
 import os
 
 from .database import run_migrations
-from .routers import league, players, lineup, matchups, waivers, trades, schedule, chat, notifications, draft, sync
+from .routers import league, players, lineup, matchups, matchup_compat, waivers, trades, schedule, chat, notifications, draft, sync
 
 
 @asynccontextmanager
@@ -56,6 +56,7 @@ app.include_router(league.router, prefix="/api/v1/league", tags=["league"])
 app.include_router(players.router, prefix="/api/v1/players", tags=["players"])
 app.include_router(lineup.router, prefix="/api/v1/lineup", tags=["lineup"])
 app.include_router(matchups.router, prefix="/api/v1/matchups", tags=["matchups"])
+app.include_router(matchup_compat.router, prefix="/api/v1/matchup", tags=["matchup"])
 app.include_router(waivers.router, prefix="/api/v1/waivers", tags=["waivers"])
 app.include_router(trades.router, prefix="/api/v1/trades", tags=["trades"])
 app.include_router(schedule.router, prefix="/api/v1/schedule", tags=["schedule"])
