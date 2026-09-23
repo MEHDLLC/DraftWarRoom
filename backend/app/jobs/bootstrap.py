@@ -44,6 +44,18 @@ async def bootstrap_data():
 
     print(f"Bootstrap complete (ran: {[k for k, v in needs.items() if v] or 'nothing'})")
 
+    from ..config import get_settings
+    if get_settings().apply_lineup_on_startup:
+        from .apply_lineup import apply_recommended_lineup
+        import json
+        try:
+            result = await asyncio.wait_for(
+                apply_recommended_lineup(confirm=True), timeout=_STEP_TIMEOUT_S
+            )
+            print("APPLY LINEUP ON STARTUP result:\n" + json.dumps(result, indent=2))
+        except Exception as e:
+            print(f"APPLY LINEUP ON STARTUP failed: {e!r}")
+
     from .report import print_team_report
     await _run_step("team report", print_team_report())
 

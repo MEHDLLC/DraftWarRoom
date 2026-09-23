@@ -26,6 +26,12 @@ class Settings(BaseSettings):
     # it builds and logs the transaction payload but never sends it to ESPN.
     espn_write_enabled: bool = False
 
+    # One-shot remote trigger: when True, startup applies the recommended
+    # lineup once (after the bootstrap data refresh), subject to the
+    # espn_write_enabled gate above. UNSET THIS after use — leaving it on
+    # re-applies the lineup on every restart.
+    apply_lineup_on_startup: bool = False
+
     _env_path: str = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
     model_config = {
         "env_file": _env_path if os.path.exists(os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")) else None,
