@@ -1,9 +1,49 @@
 from fastapi import APIRouter, HTTPException
 from ..database import get_db
-from ..schemas.models import LeagueInfo, TeamInfo, DashboardStats, PowerRanking
+from ..schemas.models import LeagueInfo, TeamInfo
 from ..jobs.sync_league import sync_league_data
 
 router = APIRouter()
+
+
+def _team_payload(r, rank: int) -> dict:
+    """Shape a team row the way the frontend expects (see client.ts Team)."""
+    return {
+        "id": str(r["id"]),
+        "name": r["team_name"],
+        "owner": r["owner_name"] or "",
+        "record": {"wins": r["wins"], "losses": r["losses"], "ties": r["ties"]},
+        "pointsFor": r["points_for"] or 0,
+        "pointsAgainst": r["points_against"] or 0,
+        "rank": rank,
+        "isUserTeam": bool(r["is_user_team"]),
+    }
+
+
+@router.get("")
+async def get_league_root():
+    """League summary in the shape the frontend's LeagueContext expects."""
+    db = await get_db()
+    try:
+        row = await db.execute_fetchall("SELECT * FROM league LIMIT 1")
+        if not row:
+            raise HTTPException(status_code=404, detail="League not synced yet. POST /api/v1/league/sync first.")
+        r = row[0]
+        team_row = await db.execute_fetchall(
+            "SELECT id FROM team WHERE is_user_team = 1 LIMIT 1"
+        )
+        return {
+            "id": str(r["id"]),
+            "name": r["name"],
+            "platform": "ESPN",
+            "season": r["season"],
+            "week": r["current_week"],
+            "teamCount": r["num_teams"],
+            "scoringType": r["scoring_type"] or "PPR",
+            "userTeamId": str(team_row[0]["id"]) if team_row else "",
+        }
+    finally:
+        await db.close()
 
 
 @router.post("/sync")
@@ -49,22 +89,13 @@ async def get_league_info():
         await db.close()
 
 
-@router.get("/teams", response_model=list[TeamInfo])
+@router.get("/teams")
 async def get_teams():
+    """Teams in standings order, shaped for the frontend (client.ts Team)."""
     db = await get_db()
     try:
         rows = await db.execute_fetchall("SELECT * FROM team ORDER BY wins DESC, points_for DESC")
-        return [
-            TeamInfo(
-                id=r["id"], espn_team_id=r["espn_team_id"], team_name=r["team_name"],
-                owner_name=r["owner_name"], wins=r["wins"], losses=r["losses"],
-                ties=r["ties"], points_for=r["points_for"], points_against=r["points_against"],
-                is_user_team=bool(r["is_user_team"]),
-                power_rank_score=r["power_rank_score"],
-                playoff_probability=r["playoff_probability"],
-            )
-            for r in rows
-        ]
+        return [_team_payload(r, i + 1) for i, r in enumerate(rows)]
     finally:
         await db.close()
 
@@ -109,85 +140,63 @@ async def get_team_roster(team_id: int):
         await db.close()
 
 
-@router.get("/dashboard", response_model=DashboardStats)
+@router.get("/dashboard")
 async def get_dashboard():
+    """Dashboard summary, shaped for the frontend (client.ts Dashboard)."""
     db = await get_db()
     try:
         league_row = await db.execute_fetchall("SELECT * FROM league LIMIT 1")
         if not league_row:
             raise HTTPException(status_code=404, detail="League not synced yet")
         lr = league_row[0]
-        league = LeagueInfo(
-            id=lr["id"], espn_id=lr["espn_id"], name=lr["name"],
-            season=lr["season"], current_week=lr["current_week"],
-            num_teams=lr["num_teams"], scoring_type=lr["scoring_type"] or "PPR",
-        )
 
-        # User team
         team_row = await db.execute_fetchall("SELECT * FROM team WHERE is_user_team = 1 LIMIT 1")
         if not team_row:
             raise HTTPException(status_code=404, detail="User team not identified")
         tr = team_row[0]
-        user_team = TeamInfo(
-            id=tr["id"], espn_team_id=tr["espn_team_id"], team_name=tr["team_name"],
-            owner_name=tr["owner_name"], wins=tr["wins"], losses=tr["losses"],
-            ties=tr["ties"], points_for=tr["points_for"], points_against=tr["points_against"],
-            is_user_team=True, power_rank_score=tr["power_rank_score"],
-            playoff_probability=tr["playoff_probability"],
-        )
 
-        # Standing
+        # Standing and points rank
         all_teams = await db.execute_fetchall(
             "SELECT id FROM team WHERE league_id = ? ORDER BY wins DESC, points_for DESC",
             (lr["id"],)
         )
         standing = next((i + 1 for i, t in enumerate(all_teams) if t["id"] == tr["id"]), 0)
 
-        # Points rank
         pts_teams = await db.execute_fetchall(
             "SELECT id FROM team WHERE league_id = ? ORDER BY points_for DESC",
             (lr["id"],)
         )
         points_rank = next((i + 1 for i, t in enumerate(pts_teams) if t["id"] == tr["id"]), 0)
 
-        # Recent matchup results
-        recent = await db.execute_fetchall("""
-            SELECT CASE
-                WHEN winner_team_id = ? THEN 'W'
-                WHEN winner_team_id IS NULL THEN '-'
-                ELSE 'L'
-            END as result
-            FROM matchup
-            WHERE (home_team_id = ? OR away_team_id = ?) AND winner_team_id IS NOT NULL
-            ORDER BY week DESC LIMIT 5
-        """, (tr["id"], tr["id"], tr["id"]))
-        recent_trend = [r["result"] for r in reversed(recent)]
-
-        # Unread notifications
+        # Unread notifications as alerts
         notifs = await db.execute_fetchall(
             "SELECT * FROM notification WHERE is_read = 0 ORDER BY created_at DESC LIMIT 5"
         )
         alerts = [
-            {
-                "id": n["id"], "title": n["title"], "body": n["body"],
-                "type": n["type"], "priority": n["priority"],
-                "is_read": False, "created_at": n["created_at"],
-            }
+            {"type": n["type"], "title": n["title"], "message": n["body"]}
             for n in notifs
         ]
 
-        return DashboardStats(
-            league=league, user_team=user_team,
-            record=f"{tr['wins']}-{tr['losses']}" + (f"-{tr['ties']}" if tr["ties"] else ""),
-            standing=standing, points_rank=points_rank,
-            recent_trend=recent_trend, alerts=alerts,
-        )
+        return {
+            "teamSummary": _team_payload(tr, standing),
+            "alerts": alerts,
+            "quickStats": {
+                "standing": standing,
+                "pointsRank": points_rank,
+                "record": f"{tr['wins']}-{tr['losses']}"
+                          + (f"-{tr['ties']}" if tr["ties"] else ""),
+            },
+        }
     finally:
         await db.close()
 
 
-@router.get("/power-rankings", response_model=list[PowerRanking])
+@router.get("/power-rankings")
 async def get_power_rankings():
+    """Power rankings shaped for the frontend (client.ts PowerRanking).
+
+    Falls back to standings order when the power-ranking job hasn't run.
+    """
     db = await get_db()
     try:
         rows = await db.execute_fetchall("""
@@ -195,19 +204,18 @@ async def get_power_rankings():
             WHERE power_rank_score IS NOT NULL
             ORDER BY power_rank_score DESC
         """)
-        return [
-            PowerRanking(
-                rank=i + 1,
-                team=TeamInfo(
-                    id=r["id"], espn_team_id=r["espn_team_id"], team_name=r["team_name"],
-                    owner_name=r["owner_name"], wins=r["wins"], losses=r["losses"],
-                    ties=r["ties"], points_for=r["points_for"], points_against=r["points_against"],
-                    is_user_team=bool(r["is_user_team"]),
-                    power_rank_score=r["power_rank_score"],
-                    playoff_probability=r["playoff_probability"],
-                ),
-                score=r["power_rank_score"],
+        if not rows:
+            rows = await db.execute_fetchall(
+                "SELECT * FROM team ORDER BY wins DESC, points_for DESC"
             )
+        return [
+            {
+                "rank": i + 1,
+                "teamId": str(r["id"]),
+                "teamName": r["team_name"],
+                "score": r["power_rank_score"] or r["points_for"] or 0,
+                "trend": 0,
+            }
             for i, r in enumerate(rows)
         ]
     finally:
