@@ -6,6 +6,21 @@ POSITION_SLOTS = {
 
 SLOT_TO_ID = {v: k for k, v in POSITION_SLOTS.items()}
 
+# espn_api slot labels -> the app's canonical slot names
+SLOT_ALIASES = {
+    "D/ST": "DST",
+    "RB/WR/TE": "FLEX",
+    "RB/WR": "FLEX",
+    "WR/TE": "FLEX",
+}
+
+
+def normalize_slot(slot: str | None) -> str | None:
+    """Normalize an espn_api lineup slot label to the app's canonical name."""
+    if not slot:
+        return slot
+    return SLOT_ALIASES.get(slot, slot)
+
 # Positions for scoring
 OFFENSIVE_POSITIONS = ["QB", "RB", "WR", "TE", "K", "DST"]
 FLEX_ELIGIBLE = ["RB", "WR", "TE"]

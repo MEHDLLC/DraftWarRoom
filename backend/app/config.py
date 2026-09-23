@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     # NFL season
     nfl_season: int = 2026
 
+    # ESPN write API (unofficial): when False, /lineup/apply always dry-runs —
+    # it builds and logs the transaction payload but never sends it to ESPN.
+    espn_write_enabled: bool = False
+
     _env_path: str = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
     model_config = {
         "env_file": _env_path if os.path.exists(os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")) else None,
